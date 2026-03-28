@@ -1,0 +1,8 @@
+dependencies:
+  idf: ">=5.3"
+  espressif/esp_hosted: "*"
+  espressif/esp_wifi_remote: "*"
+  espressif/es8311: "^1.0.0"
+  chmorgan/esp-libhelix-mp3: "*"
+  espressif/esp-dsp: ">=0.3.0"
+  espressif/esp_lcd_touch_gt911: "^1.0.0"

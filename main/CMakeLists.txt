@@ -1,0 +1,32 @@
+idf_component_register(
+    SRCS
+        "main.c"
+        "display.c"
+        "wifi.c"
+        "radio_browser.c"
+        "audio.c"
+        "stream.c"
+        "mp3_decoder.c"
+        "spectrum.c"
+        "font8x16.c"
+        "touch.c"
+    INCLUDE_DIRS "."
+    REQUIRES
+        esp_lcd
+        esp_lcd_st7703
+        esp_psram
+        esp_mm
+        esp_timer
+        log
+        driver
+        esp_driver_ppa
+        esp_driver_i2s
+        esp_wifi
+        esp_event
+        nvs_flash
+        esp_netif
+        esp_http_client
+        esp-tls
+        json
+        esp_hosted
+)

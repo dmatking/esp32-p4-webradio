@@ -1,0 +1,15 @@
+menu "P4 Radio"
+
+config WIFI_SSID
+    string "WiFi SSID"
+    default ""
+
+config WIFI_PASS
+    string "WiFi Password"
+    default ""
+
+config WIFI_TZ
+    string "POSIX timezone string"
+    default "CST6CDT,M3.2.0,M11.1.0"
+
+endmenu
