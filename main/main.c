@@ -185,15 +185,6 @@ static void draw_spectrum(uint8_t *buf)
         font_puts(buf, DISP_W - vol_w - 8, 68, vol_buf, 100, 100, 100);
     }
 
-    // Touch debug (temporary)
-    font_puts(buf, 8, 88, touch_debug_str(), 255, 255, 0);
-    uint16_t tx, ty, rx, ry;
-    if (touch_debug_pos(&tx, &ty)) {
-        char pos[48];
-        touch_debug_raw(&rx, &ry);
-        snprintf(pos, sizeof(pos), "S:%d,%d R:%d,%d", tx, ty, rx, ry);
-        font_puts(buf, 8, DISP_H - 20, pos, 0, 255, 0);
-    }
 }
 
 // ── Frame dispatch ───────────────────────────────────────────────────
