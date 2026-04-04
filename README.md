@@ -2,6 +2,8 @@
 
 Internet radio player for the [Waveshare ESP32-P4-WIFI6-Touch-LCD-4B](https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-4b.htm) board.
 
+> For chip-level notes on the P4+C6 combination (esp_hosted init, SDIO, PSRAM, errata, etc.) see [esp32-notes](https://github.com/dmatking/esp32-notes).
+
 ## Features
 
 - Streams MP3 internet radio stations via the Radio Browser API
