@@ -1,4 +1,4 @@
-# p4-radio
+# esp32-p4-webradio
 
 Internet radio player for the [Waveshare ESP32-P4-WIFI6-Touch-LCD-4B](https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-4b.htm) board.
 
