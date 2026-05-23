@@ -1,0 +1,57 @@
+menu "Captive Portal"
+
+    config CAPTIVE_PORTAL_ENABLE_DHCP_OPTION_114
+        bool "Enable DHCP Option 114 captive portal URI"
+        default y
+        help
+            Enables advertising the captive portal URI through DHCP option 114
+            (RFC 8910) on the soft-AP DHCP server.
+
+            The URI value is derived from the same effective redirect target used
+            by HTTP redirects:
+              1) captive_portal_config_t.redirect_url (if set), otherwise
+              2) dynamic IP from CAPTIVE_PORTAL_NETIF_KEY with redirect port,
+                 with CAPTIVE_PORTAL_FALLBACK_IP as fallback.
+
+            The component applies this option before registering HTTP URI
+            handlers so DHCP-aware clients can discover the portal as early as
+            possible.
+
+    config CAPTIVE_PORTAL_NETIF_KEY
+        string "Network interface key for IP auto-detection"
+        default "WIFI_AP_DEF"
+        help
+            The esp_netif interface key used to look up the network interface
+            when resolving the redirect IP address at request time.
+
+            Common values:
+              WIFI_AP_DEF   - Wi-Fi soft-AP (default, typical for captive portal)
+              WIFI_STA_DEF  - Wi-Fi station
+              ETH_DEF       - Ethernet
+
+            This value is only used when captive_portal_config_t.redirect_url
+            is NULL (dynamic IP detection mode).
+
+    config CAPTIVE_PORTAL_FALLBACK_IP
+        string "Fallback redirect IP address"
+        default "192.168.4.1"
+        help
+            The IP address used in the redirect URL when the network interface
+            IP cannot be determined (e.g. netif not found or not yet assigned).
+
+            Must match the AP IP address configured by your Wi-Fi initialisation
+            code. The ESP-IDF default soft-AP address is 192.168.4.1.
+
+    config CAPTIVE_PORTAL_REDIRECT_PORT
+        int "Redirect target TCP port"
+        default 80
+        range 1 65535
+        help
+            The TCP port of the target web server included in the generated
+            redirect URL.
+
+            Port 80 is treated as the standard HTTP port and is omitted from
+            the URL (e.g. "http://192.168.4.1/" rather than
+            "http://192.168.4.1:80/").
+
+endmenu

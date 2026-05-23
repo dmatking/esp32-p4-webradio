@@ -1,7 +1,9 @@
 dependencies:
   idf: ">=5.3"
-  espressif/esp_hosted: "*"
-  espressif/esp_wifi_remote: "*"
+  # esp_hosted 2.12.x / esp_wifi_remote 1.5.x crash on the P4 at boot
+  # (assert in esp_startup_start_app); pin below those, matching gh-dashboard.
+  espressif/esp_hosted: "<2.12"
+  espressif/esp_wifi_remote: "<1.5"
   espressif/es8311: "^1.0.0"
   chmorgan/esp-libhelix-mp3: "*"
   espressif/esp-dsp: ">=0.3.0"

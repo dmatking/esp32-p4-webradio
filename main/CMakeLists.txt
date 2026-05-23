@@ -29,4 +29,5 @@ idf_component_register(
         esp-tls
         json
         esp_hosted
+        wifi_prov
 )

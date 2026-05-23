@@ -1,5 +1,7 @@
-# Target: ESP32-P4
+# Target: ESP32-P4 v1.x silicon (NOT v3.x — required or the bootloader
+# refuses to flash on this hardware)
 CONFIG_IDF_TARGET="esp32p4"
+CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
 
 # Flash
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y

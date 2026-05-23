@@ -8,6 +8,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <string.h>
 #include "display.h"
 
 #define FONT_W 8
@@ -71,4 +72,49 @@ static inline void font_puts_2x(uint8_t *fb, int x, int y, const char *s,
         }
         x += FONT_W * 2;
     }
+}
+
+// Draw a string at an integer scale (each glyph pixel -> scale x scale block).
+static inline int font_puts_scale(uint8_t *fb, int x, int y, const char *s,
+                                   int scale, uint8_t b, uint8_t g, uint8_t r)
+{
+    uint16_t px565 = disp_rgb565(r, g, b);
+    while (*s) {
+        char c = *s++;
+        if (c < 32 || c > 126) c = '?';
+        const uint8_t *glyph = &font8x16_data[(c - 32) * FONT_H];
+        for (int row = 0; row < FONT_H; row++) {
+            uint8_t bits = glyph[row];
+            for (int col = 0; col < FONT_W; col++) {
+                if (!(bits & (0x80 >> col))) continue;
+                for (int dy = 0; dy < scale; dy++) {
+                    int py = y + row * scale + dy;
+                    if (py < 0 || py >= DISP_H) continue;
+                    int base = py * DISP_W;
+                    for (int dx = 0; dx < scale; dx++) {
+                        int px = x + col * scale + dx;
+                        if (px < 0 || px >= DISP_W) continue;
+                        ((uint16_t *)fb)[base + px] = px565;
+                    }
+                }
+            }
+        }
+        x += FONT_W * scale;
+    }
+    return x;
+}
+
+// Pixel width of a string at a given scale.
+static inline int font_text_w(const char *s, int scale)
+{
+    return (int)strlen(s) * FONT_W * scale;
+}
+
+// Draw a string horizontally centered on the display.
+static inline void font_puts_center(uint8_t *fb, int y, const char *s, int scale,
+                                     uint8_t b, uint8_t g, uint8_t r)
+{
+    int x = (DISP_W - font_text_w(s, scale)) / 2;
+    if (x < 0) x = 0;
+    font_puts_scale(fb, x, y, s, scale, b, g, r);
 }

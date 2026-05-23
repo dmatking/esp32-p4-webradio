@@ -33,6 +33,9 @@ static int s_station_idx   = 0;
 // Current song title from ICY metadata
 static char s_song_title[256] = "";
 
+// SoftAP name shown while the WiFi provisioning portal is active
+static char s_ap_ssid[33] = "";
+
 // Volume (0–100) and mute state
 static int  s_volume = 60;
 static bool s_muted  = false;
@@ -58,6 +61,7 @@ static void touch_task(void *arg)
 // App state
 typedef enum {
     STATE_WIFI_CONNECTING = 0,  // pulsing blue
+    STATE_PROVISIONING,         // pulsing teal — captive-portal setup AP is up
     STATE_FETCHING_STATIONS,    // pulsing yellow
     STATE_PLAYING,              // spectrum visualizer
     STATE_WIFI_FAILED,          // pulsing red — could not join WiFi
@@ -83,20 +87,6 @@ static void hue_to_bgr(int hue, uint8_t *b, uint8_t *g, uint8_t *r)
         default:rv=255; gv=0;   bv=q;   break;
     }
     *b = bv; *g = gv; *r = rv;
-}
-
-// Solid-color pulse fill (for status states)
-static void fill_pulse(uint8_t *buf, int frame, uint8_t br, uint8_t bg, uint8_t bb)
-{
-    int t = frame % 60;
-    int bright = (t < 30 ? t : 60 - t) * 8;
-    if (bright > 220) bright = 220;
-    uint8_t bv = (uint8_t)(bb * bright / 220);
-    uint8_t gv = (uint8_t)(bg * bright / 220);
-    uint8_t rv = (uint8_t)(br * bright / 220);
-    uint16_t px = disp_rgb565(rv, gv, bv);
-    uint16_t *p = (uint16_t *)buf;
-    for (int i = 0; i < DISP_W * DISP_H; i++) p[i] = px;
 }
 
 // ── Spectrum bar rendering ───────────────────────────────────────────
@@ -186,25 +176,35 @@ static void draw_spectrum(uint8_t *buf)
 
 static void draw_frame(int frame)
 {
+    (void)frame;
     uint8_t *buf = display_backbuf();
+
+    // Status screens: solid black background, large centered text.
+    if (s_app_state != STATE_PLAYING) {
+        memset(buf, 0, DISP_FB_SIZE);
+    }
+
     switch (s_app_state) {
     case STATE_WIFI_CONNECTING:
-        fill_pulse(buf, frame, 0, 0, 255);
-        font_puts_2x(buf, 200, 340, "Connecting...", 255, 255, 255);
+        font_puts_center(buf, 320, "Connecting...", 4, 255, 255, 0);  // cyan
+        break;
+    case STATE_PROVISIONING:
+        font_puts_center(buf, 110, "WiFi Setup", 4, 255, 255, 255);
+        font_puts_center(buf, 250, "1. Join WiFi network:", 2, 255, 255, 255);
+        font_puts_center(buf, 300, s_ap_ssid, 3, 0, 255, 255);        // yellow
+        font_puts_center(buf, 410, "2. Open in browser:", 2, 255, 255, 255);
+        font_puts_center(buf, 460, "192.168.4.1", 3, 255, 255, 0);    // cyan
         break;
     case STATE_FETCHING_STATIONS:
-        fill_pulse(buf, frame, 220, 180, 0);
-        font_puts_2x(buf, 160, 340, "Loading stations", 255, 255, 255);
+        font_puts_center(buf, 320, "Loading Stations", 4, 0, 220, 255);  // yellow
         break;
     case STATE_WIFI_FAILED:
-        fill_pulse(buf, frame, 255, 0, 0);
-        font_puts_2x(buf, 144, 320, "WiFi connect failed", 255, 255, 255);
-        font_puts(buf, 264, 374, "Check network and reboot", 255, 255, 255);
+        font_puts_center(buf, 230, "WiFi Failed", 4, 0, 0, 255);         // red
+        font_puts_center(buf, 380, "Check network and reboot", 2, 255, 255, 255);
         break;
     case STATE_API_FAILED:
-        fill_pulse(buf, frame, 255, 120, 0);
-        font_puts_2x(buf, 168, 320, "Station API error", 255, 255, 255);
-        font_puts_2x(buf, 272, 360, "Retrying...", 255, 255, 255);
+        font_puts_center(buf, 230, "Station API Error", 4, 0, 140, 255); // orange
+        font_puts_center(buf, 360, "Retrying...", 3, 255, 255, 255);
         break;
     case STATE_PLAYING:
         draw_spectrum(buf);
@@ -218,6 +218,14 @@ static void on_song_title(const char *title)
 {
     snprintf(s_song_title, sizeof(s_song_title), "%s", title);
     ESP_LOGI(TAG, "Now playing: %s", s_song_title);
+}
+
+// Captive-portal provisioning has started — show setup instructions.
+static void on_wifi_portal(const char *ap_ssid)
+{
+    snprintf(s_ap_ssid, sizeof(s_ap_ssid), "%s", ap_ssid);
+    s_app_state = STATE_PROVISIONING;
+    ESP_LOGI(TAG, "Provisioning portal up — join '%s', open 192.168.4.1", ap_ssid);
 }
 
 // ── Station control ──────────────────────────────────────────────────
@@ -274,7 +282,7 @@ static void network_task(void *arg)
         return;
     }
 
-    if (!wifi_connect()) {
+    if (!wifi_connect(on_wifi_portal)) {
         s_app_state = STATE_WIFI_FAILED;
         vTaskDelete(NULL);
         return;
