@@ -60,7 +60,8 @@ typedef enum {
     STATE_WIFI_CONNECTING = 0,  // pulsing blue
     STATE_FETCHING_STATIONS,    // pulsing yellow
     STATE_PLAYING,              // spectrum visualizer
-    STATE_WIFI_FAILED,          // solid red
+    STATE_WIFI_FAILED,          // pulsing red — could not join WiFi
+    STATE_API_FAILED,           // pulsing orange — joined WiFi, station API failed
 } app_state_t;
 static volatile app_state_t s_app_state = STATE_WIFI_CONNECTING;
 
@@ -103,7 +104,6 @@ static void fill_pulse(uint8_t *buf, int frame, uint8_t br, uint8_t bg, uint8_t 
 static void draw_spectrum(uint8_t *buf)
 {
     const float *bands = spectrum_get_bands();
-    const float *peaks = spectrum_get_peaks();
 
     // Black background
     memset(buf, 0, DISP_W * DISP_H * DISP_BPP);
@@ -145,23 +145,6 @@ static void draw_spectrum(uint8_t *buf)
             uint16_t *row = (uint16_t *)buf + y * DISP_W;
             for (int dx = 0; dx < bar_w && (x0 + dx) < DISP_W; dx++) {
                 row[x0 + dx] = px565;
-            }
-        }
-
-        // Peak dot: 3px white marker at the peak position (falls slower)
-        float pk = peaks[b];
-        if (pk < 0) pk = 0;
-        if (pk > 1.0f) pk = 1.0f;
-        int peak_h = (int)(pk * bar_area_h);
-        if (peak_h > 3) {
-            int cap_y = DISP_H - peak_h;
-            if (cap_y >= bar_area_top && cap_y < DISP_H) {
-                for (int cy = 0; cy < 3 && (cap_y + cy) < DISP_H; cy++) {
-                    uint16_t *row = (uint16_t *)buf + (cap_y + cy) * DISP_W;
-                    for (int dx = 0; dx < bar_w && (x0 + dx) < DISP_W; dx++) {
-                        row[x0 + dx] = 0xFFFF;  // white
-                    }
-                }
             }
         }
     }
@@ -215,7 +198,13 @@ static void draw_frame(int frame)
         break;
     case STATE_WIFI_FAILED:
         fill_pulse(buf, frame, 255, 0, 0);
-        font_puts_2x(buf, 240, 340, "WiFi failed", 255, 255, 255);
+        font_puts_2x(buf, 144, 320, "WiFi connect failed", 255, 255, 255);
+        font_puts(buf, 264, 374, "Check network and reboot", 255, 255, 255);
+        break;
+    case STATE_API_FAILED:
+        fill_pulse(buf, frame, 255, 120, 0);
+        font_puts_2x(buf, 168, 320, "Station API error", 255, 255, 255);
+        font_puts_2x(buf, 272, 360, "Retrying...", 255, 255, 255);
         break;
     case STATE_PLAYING:
         draw_spectrum(buf);
@@ -291,13 +280,21 @@ static void network_task(void *arg)
         return;
     }
 
+    // Fetch the station list, retrying with backoff — the Radio Browser API
+    // is flaky and a single miss shouldn't strand the radio. Keep trying so
+    // it self-heals once the API comes back.
     s_app_state = STATE_FETCHING_STATIONS;
-    s_station_count = radio_browser_fetch(s_stations, MAX_STATIONS);
-    if (s_station_count <= 0) {
-        ESP_LOGE(TAG, "No stations fetched");
-        s_app_state = STATE_WIFI_FAILED;
-        vTaskDelete(NULL);
-        return;
+    int backoff_ms = 3000;
+    for (int attempt = 1; ; attempt++) {
+        s_station_count = radio_browser_fetch(s_stations, MAX_STATIONS);
+        if (s_station_count > 0) break;
+
+        ESP_LOGW(TAG, "Station fetch failed (attempt %d), retrying in %d ms",
+                 attempt, backoff_ms);
+        s_app_state = STATE_API_FAILED;
+        vTaskDelay(pdMS_TO_TICKS(backoff_ms));
+        if (backoff_ms < 15000) backoff_ms += 3000;  // cap at 15 s
+        s_app_state = STATE_FETCHING_STATIONS;
     }
 
     ESP_LOGI(TAG, "Fetched %d stations", s_station_count);
