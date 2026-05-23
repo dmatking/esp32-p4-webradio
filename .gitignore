@@ -6,3 +6,5 @@ sdkconfig.old
 __pycache__/
 .cache/
 .claude/
+/sdkconfig
+/sdkconfig.old
