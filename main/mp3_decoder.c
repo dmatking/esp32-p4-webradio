@@ -126,12 +126,23 @@ static void decode_task(void *arg)
         MP3FrameInfo fi;
         MP3GetLastFrameInfo(decoder, &fi);
 
+        // Reject obviously bogus frame info (corrupt/aborted streams can
+        // yield samprate=0 / nChans=0). Skip a byte and resync.
+        if (fi.samprate <= 0 || (fi.nChans != 1 && fi.nChans != 2)) {
+            if (bytes_in_buf > 1) {
+                memmove(inbuf, inbuf + 1, bytes_in_buf - 1);
+                bytes_in_buf--;
+            }
+            continue;
+        }
+
         // Configure audio output on first successful decode
         if (!rate_configured) {
             ESP_LOGI(TAG, "First frame: %d Hz, %d ch, %d kbps, layer %d",
                      fi.samprate, fi.nChans, fi.bitrate / 1000, fi.layer);
-            audio_set_sample_rate(fi.samprate);
-            rate_configured = true;
+            if (audio_set_sample_rate(fi.samprate) == ESP_OK) {
+                rate_configured = true;
+            }
         }
 
         // Write PCM to I2S

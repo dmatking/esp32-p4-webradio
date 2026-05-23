@@ -9,10 +9,14 @@
 
 #define DISP_W   720
 #define DISP_H   720
-#define DISP_BPP 3
+#define DISP_BPP 2                 // RGB565, 16bpp
 #define DISP_FB_SIZE (DISP_W * DISP_H * DISP_BPP)
 
-// Pixel format in the backbuf is BGR (bytes: [0]=B, [1]=G, [2]=R)
+// The backbuf holds one little-endian uint16 RGB565 pixel per location.
+static inline uint16_t disp_rgb565(uint8_t r, uint8_t g, uint8_t b)
+{
+    return (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
+}
 
 void     display_init(void);
 
@@ -33,6 +37,5 @@ void     display_fill(uint8_t r, uint8_t g, uint8_t b);
 static inline void display_set_pixel(int x, int y, uint8_t r, uint8_t g, uint8_t b)
 {
     extern uint8_t *g_backbuf;
-    uint8_t *p = g_backbuf + (y * DISP_W + x) * DISP_BPP;
-    p[0] = b; p[1] = g; p[2] = r;
+    ((uint16_t *)g_backbuf)[y * DISP_W + x] = disp_rgb565(r, g, b);
 }

@@ -29,10 +29,7 @@ static inline void font_putc(uint8_t *fb, int x, int y, char c,
             if (!(bits & (0x80 >> col))) continue;
             int px = x + col;
             if (px < 0 || px >= DISP_W) continue;
-            int off = (py * DISP_W + px) * DISP_BPP;
-            fb[off + 0] = b;
-            fb[off + 1] = g;
-            fb[off + 2] = r;
+            ((uint16_t *)fb)[py * DISP_W + px] = disp_rgb565(r, g, b);
         }
     }
 }
@@ -67,10 +64,7 @@ static inline void font_puts_2x(uint8_t *fb, int x, int y, const char *s,
                     for (int dx = 0; dx < 2; dx++) {
                         int px = x + col * 2 + dx;
                         if (px < 0 || px >= DISP_W) continue;
-                        int off = (py * DISP_W + px) * DISP_BPP;
-                        fb[off + 0] = b;
-                        fb[off + 1] = g;
-                        fb[off + 2] = r;
+                        ((uint16_t *)fb)[py * DISP_W + px] = disp_rgb565(r, g, b);
                     }
                 }
             }

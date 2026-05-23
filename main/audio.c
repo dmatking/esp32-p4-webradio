@@ -118,12 +118,22 @@ esp_err_t audio_write(const int16_t *samples, size_t num_samples,
 
 esp_err_t audio_set_sample_rate(int rate)
 {
+    // Sample rate comes from decoded stream metadata, which can be garbage
+    // for corrupt/aborted streams. Reject anything out of range rather than
+    // letting the I2S driver abort the whole app.
+    if (rate < 8000 || rate > 96000) {
+        ESP_LOGW(TAG, "Ignoring invalid sample rate %d", rate);
+        return ESP_ERR_INVALID_ARG;
+    }
+
     if (rate == s_sample_rate) return ESP_OK;
 
     ESP_LOGI(TAG, "Changing sample rate %d → %d", s_sample_rate, rate);
 
+    esp_err_t err;
+
     // Disable, reconfigure, re-enable I2S
-    ESP_ERROR_CHECK(i2s_channel_disable(s_tx_handle));
+    if ((err = i2s_channel_disable(s_tx_handle)) != ESP_OK) goto fail;
 
     i2s_std_config_t std_cfg = {
         .clk_cfg  = I2S_STD_CLK_DEFAULT_CONFIG(rate),
@@ -139,15 +149,23 @@ esp_err_t audio_set_sample_rate(int rate)
         },
     };
     std_cfg.clk_cfg.mclk_multiple = MCLK_MULTIPLE;
-    ESP_ERROR_CHECK(i2s_channel_reconfig_std_clock(s_tx_handle, &std_cfg.clk_cfg));
-    ESP_ERROR_CHECK(i2s_channel_enable(s_tx_handle));
+    if ((err = i2s_channel_reconfig_std_clock(s_tx_handle, &std_cfg.clk_cfg)) != ESP_OK)
+        goto reenable;
+    if ((err = es8311_sample_frequency_config(
+            s_codec, rate * MCLK_MULTIPLE, rate)) != ESP_OK)
+        goto reenable;
 
-    // Reconfigure ES8311 clocks
-    ESP_ERROR_CHECK(es8311_sample_frequency_config(
-        s_codec, rate * MCLK_MULTIPLE, rate));
-
+    i2s_channel_enable(s_tx_handle);
     s_sample_rate = rate;
     return ESP_OK;
+
+reenable:
+    // Restore the channel to a running state at the old rate so playback can
+    // continue / be retried with the next station.
+    i2s_channel_enable(s_tx_handle);
+fail:
+    ESP_LOGW(TAG, "Sample rate change to %d failed: %s", rate, esp_err_to_name(err));
+    return err;
 }
 
 esp_err_t audio_set_volume(int vol)

@@ -9,7 +9,9 @@
 #include <stdbool.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "esp_heap_caps.h"
 #include "display.h"
 #include "wifi.h"
@@ -35,6 +37,23 @@ static char s_song_title[256] = "";
 static int  s_volume = 60;
 static bool s_muted  = false;
 static bool s_touch_ready = false;
+
+// Touch runs in its own task so gestures are sampled densely (every
+// TOUCH_POLL_MS) regardless of how long a render frame takes. Events are
+// handed to the main loop via a small queue.
+#define TOUCH_POLL_MS  15
+static QueueHandle_t s_touch_q;
+
+static void touch_task(void *arg)
+{
+    for (;;) {
+        touch_event_t ev = touch_poll();
+        if (ev != TOUCH_EVENT_NONE) {
+            xQueueSend(s_touch_q, &ev, 0);  // drop if full, never block
+        }
+        vTaskDelay(pdMS_TO_TICKS(TOUCH_POLL_MS));
+    }
+}
 
 // App state
 typedef enum {
@@ -74,11 +93,9 @@ static void fill_pulse(uint8_t *buf, int frame, uint8_t br, uint8_t bg, uint8_t 
     uint8_t bv = (uint8_t)(bb * bright / 220);
     uint8_t gv = (uint8_t)(bg * bright / 220);
     uint8_t rv = (uint8_t)(br * bright / 220);
-    for (int i = 0; i < DISP_W * DISP_H; i++) {
-        buf[i * DISP_BPP + 0] = bv;
-        buf[i * DISP_BPP + 1] = gv;
-        buf[i * DISP_BPP + 2] = rv;
-    }
+    uint16_t px = disp_rgb565(rv, gv, bv);
+    uint16_t *p = (uint16_t *)buf;
+    for (int i = 0; i < DISP_W * DISP_H; i++) p[i] = px;
 }
 
 // ── Spectrum bar rendering ───────────────────────────────────────────
@@ -124,12 +141,10 @@ static void draw_spectrum(uint8_t *buf)
             uint8_t pg = (uint8_t)(cg * bright / 255);
             uint8_t pr = (uint8_t)(cr * bright / 255);
 
-            uint8_t *row = buf + y * DISP_W * DISP_BPP;
+            uint16_t px565 = disp_rgb565(pr, pg, pb);
+            uint16_t *row = (uint16_t *)buf + y * DISP_W;
             for (int dx = 0; dx < bar_w && (x0 + dx) < DISP_W; dx++) {
-                int px = (x0 + dx) * DISP_BPP;
-                row[px + 0] = pb;
-                row[px + 1] = pg;
-                row[px + 2] = pr;
+                row[x0 + dx] = px565;
             }
         }
 
@@ -142,12 +157,9 @@ static void draw_spectrum(uint8_t *buf)
             int cap_y = DISP_H - peak_h;
             if (cap_y >= bar_area_top && cap_y < DISP_H) {
                 for (int cy = 0; cy < 3 && (cap_y + cy) < DISP_H; cy++) {
-                    uint8_t *row = buf + (cap_y + cy) * DISP_W * DISP_BPP;
+                    uint16_t *row = (uint16_t *)buf + (cap_y + cy) * DISP_W;
                     for (int dx = 0; dx < bar_w && (x0 + dx) < DISP_W; dx++) {
-                        int px = (x0 + dx) * DISP_BPP;
-                        row[px + 0] = 255;
-                        row[px + 1] = 255;
-                        row[px + 2] = 255;
+                        row[x0 + dx] = 0xFFFF;  // white
                     }
                 }
             }
@@ -221,19 +233,18 @@ static void on_song_title(const char *title)
 
 // ── Station control ──────────────────────────────────────────────────
 
-static TickType_t s_last_switch_tick = 0;
+// Debounced station selection: a tap moves the highlight and updates the
+// UI immediately, but we hold off tearing down / starting a stream until the
+// user has stopped paging for STATION_DEBOUNCE_MS.
+#define STATION_DEBOUNCE_MS 300
 
-static void play_station(int idx)
+static int        s_pending_idx  = -1;   // -1 = nothing pending
+static TickType_t s_pending_tick = 0;
+
+// Actually switch the stream to `idx`. Heavy: stops/starts tasks.
+static void commit_station(int idx)
 {
     if (idx < 0 || idx >= s_station_count) return;
-
-    // Prevent rapid switching (min 2 seconds between switches)
-    TickType_t now = xTaskGetTickCount();
-    if ((now - s_last_switch_tick) < pdMS_TO_TICKS(2000) && s_last_switch_tick != 0) {
-        ESP_LOGW(TAG, "Station switch too fast, ignoring");
-        return;
-    }
-    s_last_switch_tick = now;
 
     stream_stop();
     mp3dec_stop();
@@ -248,6 +259,17 @@ static void play_station(int idx)
     stream_start(st->url, on_song_title);
     mp3dec_start(NULL);
     s_app_state = STATE_PLAYING;
+}
+
+// Touch-driven selection: update highlight now, defer the stream start.
+static void select_station(int idx)
+{
+    if (idx < 0 || idx >= s_station_count) return;
+    s_station_idx  = idx;        // UI reflects selection immediately
+    s_song_title[0] = '\0';
+    s_pending_idx  = idx;
+    s_pending_tick = xTaskGetTickCount();
+    s_app_state    = STATE_PLAYING;
 }
 
 // ── Network task ─────────────────────────────────────────────────────
@@ -292,6 +314,8 @@ static void network_task(void *arg)
     // Initialize touch (GT911 on same I2C bus)
     if (touch_init() == ESP_OK) {
         s_touch_ready = true;
+        s_touch_q = xQueueCreate(8, sizeof(touch_event_t));
+        xTaskCreate(touch_task, "touch", 4096, NULL, 6, NULL);
     } else {
         ESP_LOGW(TAG, "Touch init failed — continuing without touch");
     }
@@ -308,7 +332,7 @@ static void network_task(void *arg)
         }
     }
 found:
-    play_station(start_idx);
+    commit_station(start_idx);
     vTaskDelete(NULL);
 }
 
@@ -322,29 +346,42 @@ void app_main(void)
     xTaskCreate(network_task, "network", 32768, NULL, 5, NULL);
 
     int frame = 0;
-    int no_audio_frames = 0;
+    TickType_t dead_since = 0;   // tick when stream first looked dead (0 = alive)
+    // Temporary frame-time instrumentation (remove after perf tuning).
+    int64_t fps_accum = 0;
+    int     fps_n = 0;
+
     while (1) {
+        int64_t t0 = esp_timer_get_time();
         draw_frame(frame++);
         display_flush();
+        fps_accum += esp_timer_get_time() - t0;
+        if (++fps_n >= 120) {
+            int us = (int)(fps_accum / fps_n);
+            ESP_LOGI(TAG, "render: %d us/frame (%d fps)", us, us > 0 ? 1000000 / us : 0);
+            fps_accum = 0;
+            fps_n = 0;
+        }
 
-        // Handle touch input (poll every 4th frame ~130ms to reduce I2C pressure)
-        if (s_touch_ready && s_app_state == STATE_PLAYING && (frame % 2 == 0)) {
-            touch_event_t ev = touch_poll();
+        // Handle touch input — drain everything the touch task has queued.
+        touch_event_t ev;
+        while (s_app_state == STATE_PLAYING && s_touch_q &&
+               xQueueReceive(s_touch_q, &ev, 0)) {
             switch (ev) {
             case TOUCH_EVENT_TAP_LEFT:
                 ESP_LOGI(TAG, "Touch: previous station");
                 {
                     int prev = (s_station_idx - 1 + s_station_count) % s_station_count;
-                    play_station(prev);
-                    no_audio_frames = 0;
+                    select_station(prev);
+                    dead_since = 0;
                 }
                 break;
             case TOUCH_EVENT_TAP_RIGHT:
                 ESP_LOGI(TAG, "Touch: next station");
                 {
                     int next = (s_station_idx + 1) % s_station_count;
-                    play_station(next);
-                    no_audio_frames = 0;
+                    select_station(next);
+                    dead_since = 0;
                 }
                 break;
             case TOUCH_EVENT_TAP_CENTER:
@@ -370,19 +407,33 @@ void app_main(void)
             }
         }
 
-        vTaskDelay(pdMS_TO_TICKS(33));
+        vTaskDelay(pdMS_TO_TICKS(10));
 
-        // Auto-advance: if stream dies, try the next station
-        if (s_app_state == STATE_PLAYING && !stream_is_active()) {
-            no_audio_frames++;
-            if (no_audio_frames > 150) {
+        // Commit a pending (debounced) station selection once the user has
+        // stopped paging for STATION_DEBOUNCE_MS.
+        if (s_pending_idx >= 0 &&
+            (xTaskGetTickCount() - s_pending_tick) >= pdMS_TO_TICKS(STATION_DEBOUNCE_MS)) {
+            int idx = s_pending_idx;
+            s_pending_idx = -1;
+            commit_station(idx);
+            dead_since = 0;
+            continue;
+        }
+
+        // Auto-advance: if the stream stays dead for ~5 s, try the next
+        // station. Suppressed while a selection is pending (the stream is
+        // intentionally about to change).
+        if (s_app_state == STATE_PLAYING && s_pending_idx < 0 && !stream_is_active()) {
+            TickType_t now = xTaskGetTickCount();
+            if (dead_since == 0) dead_since = now;
+            if ((now - dead_since) >= pdMS_TO_TICKS(5000)) {
                 ESP_LOGW(TAG, "Stream dead, advancing to next station");
                 int next = (s_station_idx + 1) % s_station_count;
-                play_station(next);
-                no_audio_frames = 0;
+                commit_station(next);
+                dead_since = 0;
             }
         } else {
-            no_audio_frames = 0;
+            dead_since = 0;
         }
     }
 }

@@ -28,6 +28,7 @@ static StreamBufferHandle_t s_ringbuf;
 // ── Task control ─────────────────────────────────────────────────────
 static TaskHandle_t s_task;
 static volatile bool s_running;
+static volatile bool s_task_done = true;
 static char s_url[300];
 static icy_meta_cb_t s_meta_cb;
 
@@ -82,14 +83,20 @@ static void feed_data(const uint8_t *data, int len)
         if (s_icy_metaint > 0 && chunk > s_icy_count)
             chunk = s_icy_count;
 
-        // Write audio bytes to ring buffer (block up to 500 ms)
+        // Bail out promptly if a stop was requested — otherwise we could
+        // stay blocked in xStreamBufferSend while play_station() tears the
+        // stream down, leaving two producers on the single-producer buffer.
+        if (!s_running) break;
+
+        // Write audio bytes to ring buffer (short blocking window so we can
+        // notice s_running going false quickly)
         size_t written = xStreamBufferSend(s_ringbuf, data, chunk,
-                                            pdMS_TO_TICKS(500));
+                                            pdMS_TO_TICKS(100));
         data += written;
         len  -= written;
         if (s_icy_metaint > 0) s_icy_count -= written;
 
-        if (written == 0) {
+        if (written == 0 && s_running) {
             // Buffer full and timed out — drop remaining chunk
             ESP_LOGW(TAG, "Ring buffer full, dropping %d bytes", len);
             break;
@@ -113,6 +120,7 @@ static esp_err_t http_event(esp_http_client_event_t *evt)
 // ── Streaming task ───────────────────────────────────────────────────
 static void stream_task(void *arg)
 {
+    s_task_done = false;
     ESP_LOGI(TAG, "Connecting to %s", s_url);
 
     esp_http_client_config_t cfg = {
@@ -187,6 +195,8 @@ done:
     esp_http_client_close(client);
     esp_http_client_cleanup(client);
     s_running = false;
+    s_task = NULL;
+    s_task_done = true;
     ESP_LOGI(TAG, "Stream task exiting");
     vTaskDelete(NULL);
 }
@@ -214,11 +224,15 @@ void stream_start(const char *url, icy_meta_cb_t meta_cb)
 
 void stream_stop(void)
 {
-    if (s_running) {
-        s_running = false;
-        // Give task time to exit
-        vTaskDelay(pdMS_TO_TICKS(200));
+    s_running = false;
+
+    // Wait for the stream task to actually exit before touching the ring
+    // buffer. xStreamBufferReset() asserts if a task is still blocked on a
+    // send, and a lingering producer would collide with the next task.
+    for (int i = 0; i < 100 && !s_task_done; i++) {
+        vTaskDelay(pdMS_TO_TICKS(20));
     }
+
     if (s_ringbuf) {
         xStreamBufferReset(s_ringbuf);
     }
