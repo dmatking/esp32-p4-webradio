@@ -7,22 +7,77 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
 #include "cJSON.h"
+#include "wifi_prov.h"
 #include "radio_browser.h"
 
 #define TAG "radio_browser"
 
-// API URL: top Texas stations by vote count, MP3/AAC codec
-#define API_URL \
+// Fixed part of the query: top MP3 stations by vote count, working only.
+#define API_BASE \
     "https://de1.api.radio-browser.info/json/stations/search" \
-    "?countrycode=US&state=Texas&limit=60&order=votes&reverse=true" \
-    "&hidebroken=true&codec=MP3"
+    "?order=votes&reverse=true&hidebroken=true&codec=MP3"
+
+// Built-in defaults, used when the captive-portal fields were never set (i.e.
+// a unit provisioned before these fields existed — keeps the old behavior).
+#define DEFAULT_COUNTRY "US"
+#define DEFAULT_STATE   "Texas"
+#define DEFAULT_LIMIT   60
 
 #define RESP_BUF_SIZE (128 * 1024)  // 128 KB in PSRAM — Radio Browser returns ~70 KB for 60 stations
+
+// Percent-encode `src` into `dst` (RFC 3986 unreserved set passes through).
+static void url_encode(char *dst, size_t dlen, const char *src)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    size_t o = 0;
+    for (const unsigned char *p = (const unsigned char *)src; *p && o + 3 < dlen; p++) {
+        unsigned char c = *p;
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+            (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~') {
+            dst[o++] = (char)c;
+        } else {
+            dst[o++] = '%';
+            dst[o++] = hex[c >> 4];
+            dst[o++] = hex[c & 0x0F];
+        }
+    }
+    dst[o] = '\0';
+}
+
+// Assemble the search URL from the captive-portal settings (or defaults).
+static void build_api_url(char *url, size_t ulen, int max_stations)
+{
+    char country[8], state[STATION_NAME_LEN], count[8];
+
+    // wifi_prov_get returns false when the key was never stored — fall back to
+    // the historical US/Texas/60 query. An explicitly-blank field means "no
+    // filter" (worldwide / all states), so we keep the empty string.
+    if (!wifi_prov_get("country", country, sizeof(country)))
+        snprintf(country, sizeof(country), "%s", DEFAULT_COUNTRY);
+    if (!wifi_prov_get("state", state, sizeof(state)))
+        snprintf(state, sizeof(state), "%s", DEFAULT_STATE);
+
+    int limit = DEFAULT_LIMIT;
+    if (wifi_prov_get("count", count, sizeof(count)) && count[0])
+        limit = atoi(count);
+    if (limit < 1) limit = 1;
+    if (limit > max_stations) limit = max_stations;
+
+    int n = snprintf(url, ulen, "%s&limit=%d", API_BASE, limit);
+    if (country[0] && n < (int)ulen)
+        n += snprintf(url + n, ulen - n, "&countrycode=%s", country);
+    if (state[0] && n < (int)ulen) {
+        char enc[3 * STATION_NAME_LEN];
+        url_encode(enc, sizeof(enc), state);
+        snprintf(url + n, ulen - n, "&state=%s", enc);
+    }
+}
 
 static char *s_resp_buf;
 static int   s_resp_len;
@@ -53,8 +108,12 @@ int radio_browser_fetch(radio_station_t *stations, int max_stations)
     }
     s_resp_len = 0;
 
+    char api_url[512];
+    build_api_url(api_url, sizeof(api_url), max_stations);
+    ESP_LOGI(TAG, "Query: %s", api_url);
+
     esp_http_client_config_t config = {
-        .url = API_URL,
+        .url = api_url,
         .event_handler = http_event_handler,
         .crt_bundle_attach = esp_crt_bundle_attach,
         .timeout_ms = 10000,

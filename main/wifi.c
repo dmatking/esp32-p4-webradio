@@ -18,6 +18,18 @@
 
 static wifi_portal_cb_t s_on_portal;
 
+// Extra captive-portal fields for the station query. All optional: left blank,
+// the firmware falls back to its built-in defaults (see radio_browser.c).
+static const wifi_prov_field_t s_extra_fields[] = {
+    { .key = "country", .label = "Country code (ISO 2-letter)",
+      .placeholder = "US - blank for worldwide" },
+    { .key = "state", .label = "State / region (optional)",
+      .placeholder = "e.g. Texas" },
+    { .key = "count", .label = "Number of stations",
+      .placeholder = "30", .input_type = "number",
+      .input_min = "1", .input_max = "60" },
+};
+
 // wifi_prov passes a void* ctx we don't need; adapt to our simpler callback.
 static void portal_started(const char *ap_ssid, void *ctx)
 {
@@ -41,6 +53,8 @@ bool wifi_connect(wifi_portal_cb_t on_portal)
         .boot_gpio         = -1,     // no physical reprovision button
         .on_portal         = portal_started,
         .on_connect_failed = portal_started,
+        .extra_fields      = s_extra_fields,
+        .extra_count       = sizeof(s_extra_fields) / sizeof(s_extra_fields[0]),
     };
     return wifi_prov_start(&cfg);
 }
