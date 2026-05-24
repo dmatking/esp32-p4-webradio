@@ -27,11 +27,18 @@ Wi-Fi network and shows setup instructions on screen:
 
 1. On your phone or laptop, join the Wi-Fi network named **`P4-Radio-Setup`**.
 2. Open **`192.168.4.1`** in a browser.
-3. Enter your home network's name and password, and submit.
+3. Enter your home network's name and password.
+4. Optionally choose which stations to load:
+   - **Country code** — ISO 2-letter (e.g. `US`, `GB`, `DE`). Leave blank for worldwide.
+   - **State / region** — e.g. `Texas`. Optional; leave blank for the whole country.
+   - **Number of stations** — 1–60 (default 30).
 
-The radio saves your network and connects automatically on every boot after
-that. To set up a different network, erase the device and start over (see
-[BUILDING.md](BUILDING.md#re-provisioning-wi-fi)).
+   Leave these blank to use the built-in defaults (top US/Texas stations).
+5. Submit.
+
+The radio saves your settings and connects automatically on every boot after
+that. To change your network or station selection, erase the device and start
+over (see [BUILDING.md](BUILDING.md#re-provisioning-wi-fi)).
 
 ## Touch controls
 

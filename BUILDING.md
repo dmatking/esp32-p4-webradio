@@ -47,8 +47,8 @@ It lands in `build/` and is flashable to offset `0x0`.
 
 ## Re-provisioning Wi-Fi
 
-Saved Wi-Fi credentials live in NVS. To forget them and re-run first-boot
-setup, erase the flash:
+Saved Wi-Fi credentials and station settings (country, state, count) live in
+NVS. To forget them and re-run first-boot setup, erase the flash:
 
 ```bash
 idf.py -p /dev/ttyACM0 erase-flash
