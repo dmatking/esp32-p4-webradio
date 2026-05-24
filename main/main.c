@@ -11,7 +11,6 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "esp_log.h"
-#include "esp_timer.h"
 #include "esp_heap_caps.h"
 #include "nvs.h"
 #include "display.h"
@@ -422,21 +421,10 @@ void app_main(void)
 
     int frame = 0;
     TickType_t dead_since = 0;   // tick when stream first looked dead (0 = alive)
-    // Temporary frame-time instrumentation (remove after perf tuning).
-    int64_t fps_accum = 0;
-    int     fps_n = 0;
 
     while (1) {
-        int64_t t0 = esp_timer_get_time();
         draw_frame(frame++);
         display_flush();
-        fps_accum += esp_timer_get_time() - t0;
-        if (++fps_n >= 120) {
-            int us = (int)(fps_accum / fps_n);
-            ESP_LOGI(TAG, "render: %d us/frame (%d fps)", us, us > 0 ? 1000000 / us : 0);
-            fps_accum = 0;
-            fps_n = 0;
-        }
 
         // Handle touch input — drain everything the touch task has queued.
         touch_event_t ev;
