@@ -11,8 +11,8 @@ first boot through a phone or laptop.
 
 | Board | Display | Touch | Audio |
 |-------|---------|-------|-------|
-| [Waveshare ESP32-P4-WIFI6-Touch-LCD-4B](https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-4b.htm) | 720×720 (ST7703) | GT911 | ES8311 |
 | [M5Stack Tab5](https://docs.m5stack.com/en/products/sku/k145) | 1280×720 landscape (ST7123) | ST7123 | ES8388 |
+| [Waveshare ESP32-P4-WIFI6-Touch-LCD-4B](https://www.waveshare.com/esp32-p4-wifi6-touch-lcd-4b.htm) | 720×720 (ST7703) | GT911 | ES8311 |
 
 Both use an ESP32-C6 co-processor for Wi-Fi (via `esp_hosted` over SDIO). Pick
 the matching release binary for your board.
@@ -23,8 +23,8 @@ The easiest way to get started. From the
 [latest release](https://github.com/dmatking/esp32-p4-webradio/releases/latest),
 download the binary for your board:
 
-- `p4-webradio-waveshare-*.bin`
 - `p4-webradio-tab5-*.bin`
+- `p4-webradio-waveshare-*.bin`
 
 Each is a complete single image — bootloader, app, **and** the Wi-Fi
 co-processor firmware all in one file.

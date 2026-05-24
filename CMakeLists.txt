@@ -1,11 +1,11 @@
 cmake_minimum_required(VERSION 3.16)
 
-# Board selection: BOARD=tab5 idf build   (default: waveshare)
+# Board selection: BOARD=waveshare idf build   (default: tab5)
 # Use an env var — cmake -D doesn't propagate into IDF component scopes.
 if(DEFINED ENV{BOARD})
     set(BOARD "$ENV{BOARD}")
 else()
-    set(BOARD "waveshare")
+    set(BOARD "tab5")
 endif()
 message(STATUS "ROOT: BOARD='${BOARD}'")
 

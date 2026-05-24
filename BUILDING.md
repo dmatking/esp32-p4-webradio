@@ -12,8 +12,8 @@ instead — see the [README](README.md).
 - [ESP-IDF](https://docs.espressif.com/projects/esp-idf/) **v5.5.3** with the
   ESP32-P4 toolchain.
 - One of the supported boards (both are ESP32-P4 + ESP32-C6):
+  - M5Stack Tab5 (720×1280 panel run landscape, ST7123, ES8388) — default
   - Waveshare ESP32-P4-WIFI6-Touch-LCD-4B (720×720, ST7703, GT911, ES8311)
-  - M5Stack Tab5 (720×1280 panel run landscape, ST7123, ES8388)
 
 These boards use **pre-v3 P4 silicon (v1.x)**. The build sets
 `CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y` in `sdkconfig.defaults`. If you regenerate
@@ -23,12 +23,12 @@ re-applied: `rm -f sdkconfig`.
 ## Selecting a board
 
 The target board is chosen with the `BOARD` environment variable at configure
-time (default: `waveshare`). It selects the board source file, the component
+time (default: `tab5`). It selects the board source file, the component
 manifest, and a board-specific sdkconfig layer.
 
 ```bash
-BOARD=waveshare idf.py build     # default
-BOARD=tab5      idf.py build
+idf.py build                     # default: tab5
+BOARD=waveshare idf.py build
 ```
 
 Switching boards changes the component set and sdkconfig — do a clean build when
@@ -40,8 +40,8 @@ you switch: `rm -rf build sdkconfig`.
 source ~/esp/esp-idf-v5.5.3/export.sh
 
 idf.py set-target esp32p4              # only needed once
-BOARD=tab5 idf.py build                # or BOARD=waveshare
-BOARD=tab5 idf.py -p /dev/ttyACM0 flash monitor
+idf.py build                           # default tab5; BOARD=waveshare for the Waveshare
+idf.py -p /dev/ttyACM0 flash monitor
 ```
 
 No Wi-Fi credentials are compiled in — the device is provisioned at runtime

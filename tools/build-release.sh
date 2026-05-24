@@ -14,7 +14,7 @@ cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 OUT="$ROOT/releases"
 SLAVE_FW="$ROOT/slave_fw/network_adapter.bin"
-DEFAULT_BOARDS=(waveshare tab5)
+DEFAULT_BOARDS=(tab5 waveshare)
 BOARDS=("${@:-${DEFAULT_BOARDS[@]}}")
 VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
 
