@@ -17,6 +17,7 @@ idf_component_register(
         "main.c"
         ${BOARD_SRC}
         "wifi.c"
+        "slave_ota.c"
         "radio_browser.c"
         "stream.c"
         "mp3_decoder.c"
@@ -41,5 +42,8 @@ idf_component_register(
         json
         esp_hosted
         wifi_prov
+        esp_app_format
+        esp_partition
+        app_update
         ${EXTRA_REQUIRES}
 )

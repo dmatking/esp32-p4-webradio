@@ -9,6 +9,7 @@
 #include "esp_log.h"
 #include "esp_hosted.h"
 #include "wifi_prov.h"
+#include "slave_ota.h"
 #include "wifi.h"
 
 #define TAG "wifi"
@@ -46,6 +47,10 @@ bool wifi_connect(wifi_portal_cb_t on_portal)
     ESP_ERROR_CHECK(esp_hosted_init());
     ESP_ERROR_CHECK(esp_hosted_connect_to_slave());
     ESP_LOGI(TAG, "Co-processor ready");
+
+    // Boards ship with old C6 firmware (v0.0.0). OTA it from the slave_fw
+    // partition if it doesn't match the bundled version. No-op once current.
+    slave_ota_update_if_needed();
 
     wifi_prov_config_t cfg = {
         .ap_ssid           = PROV_AP_SSID,
