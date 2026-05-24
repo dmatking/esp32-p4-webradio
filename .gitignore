@@ -10,3 +10,6 @@ __pycache__/
 .claude/
 /sdkconfig
 /sdkconfig.old
+
+# Release artifacts (built by tools/build-release.sh; published to GitHub releases)
+/releases/
