@@ -1,1 +1,1 @@
-set(BOARD "waveshare")
+set(BOARD "tab5")

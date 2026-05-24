@@ -1,0 +1,14 @@
+# M5Stack Tab5 board-specific overrides (layered on top of sdkconfig.defaults).
+#
+# The ESP32-C6 co-processor is wired to a DIFFERENT set of SDIO pins than the
+# Waveshare board (whose pins are the esp_hosted defaults). esp_hosted 2.11.7
+# uses the CONFIG_ESP_SDIO_* namespace; override the pins for the Tab5 here.
+# Tab5: SDIO slot 1 on GPIOs 8-13, slave reset on GPIO 54 (active high).
+CONFIG_ESP_SDIO_PIN_CMD=13
+CONFIG_ESP_SDIO_PIN_CLK=12
+CONFIG_ESP_SDIO_PIN_D0=11
+CONFIG_ESP_SDIO_PIN_D1=10
+CONFIG_ESP_SDIO_PIN_D2=9
+CONFIG_ESP_SDIO_PIN_D3=8
+CONFIG_ESP_SDIO_GPIO_RESET_SLAVE=54
+CONFIG_SDIO_RESET_ACTIVE_HIGH=y
