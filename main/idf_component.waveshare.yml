@@ -1,9 +1,10 @@
 dependencies:
   idf: ">=5.3"
-  # esp_hosted 2.12.x / esp_wifi_remote 1.5.x crash on the P4 at boot
-  # (assert in esp_startup_start_app); pin below those, matching gh-dashboard.
-  espressif/esp_hosted: "<2.12"
-  espressif/esp_wifi_remote: "<1.5"
+  # Match the C6 slave firmware (v2.12.3) on the host side. The older 2.12.0
+  # boot assert (esp_startup_start_app) is fixed by 2.12.3 — verified on the P4
+  # via esp32-terminal, which runs this exact set.
+  espressif/esp_hosted: "==2.12.3"
+  espressif/esp_wifi_remote: "==1.5.0"
   espressif/es8311: "^1.0.0"
   chmorgan/esp-libhelix-mp3: "*"
   espressif/esp-dsp: ">=0.3.0"
