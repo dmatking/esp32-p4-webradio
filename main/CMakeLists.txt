@@ -6,7 +6,7 @@ set(EXTRA_REQUIRES "")
 
 if(BOARD STREQUAL "tab5")
     set(BOARD_SRC "board_m5stack_tab5.c")
-    list(APPEND EXTRA_REQUIRES esp_codec_dev esp_lcd_touch_st7123 esp_lcd_st7123)
+    list(APPEND EXTRA_REQUIRES esp_codec_dev esp_lcd_touch_st7123 esp_lcd_st7123 esp_driver_ppa)
 else()
     set(BOARD_SRC "board_waveshare_p4_720.c")
     list(APPEND EXTRA_REQUIRES esp_lcd_st7703 es8311)

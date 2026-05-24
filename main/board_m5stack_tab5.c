@@ -27,6 +27,7 @@
 #include "driver/i2c_master.h"
 #include "driver/i2s_std.h"
 #include "driver/ledc.h"
+#include "driver/ppa.h"
 #include "esp_lcd_mipi_dsi.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_io.h"
@@ -78,8 +79,14 @@ const char *board_name(void) { return "M5Stack Tab5"; }
 #define LCD_LEDC_DUTY_RES  LEDC_TIMER_12_BIT
 #define LCD_LEDC_DUTY_MAX  4095
 
-#define LCD_W            720
-#define LCD_H            1280
+// The panel is physically portrait (720x1280). We present landscape by
+// rendering into a logical 1280x720 buffer and rotating 90 deg into the
+// physical framebuffer with the PPA (hardware 2D engine) every flush.
+#define PHYS_W           720
+#define PHYS_H           1280
+#define LOG_W            1280   // logical landscape width
+#define LOG_H            720    // logical landscape height
+#define FB_BYTES         (PHYS_W * PHYS_H * 2)  // == LOG_W*LOG_H*2
 #define DSI_LANE_BITRATE 965   // Mbps
 #define DPI_CLOCK_MHZ    70
 
@@ -94,9 +101,11 @@ int g_disp_h;
 
 static esp_lcd_panel_handle_t   s_panel;
 static esp_lcd_panel_io_handle_t s_panel_io;
-static uint8_t                 *s_fb[2];
+static uint8_t                 *s_fb[2];      // physical HW framebuffers (720x1280)
 static int                      s_back;
-uint8_t                        *g_backbuf;   // current render buffer
+static uint8_t                 *s_logical;    // logical landscape buffer (1280x720)
+static ppa_client_handle_t      s_ppa;
+uint8_t                        *g_backbuf;    // == s_logical; render target
 
 static i2c_master_bus_handle_t  s_i2c_bus;
 static i2c_master_dev_handle_t  s_pi4ioe1;
@@ -246,10 +255,37 @@ void display_flush_wait(void) { }
 
 void display_flush(void)
 {
-    esp_cache_msync(g_backbuf, DISP_FB_SIZE, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
-    esp_lcd_panel_draw_bitmap(s_panel, 0, 0, DISP_W, DISP_H, g_backbuf);
+    // Flush the rendered logical buffer out of cache, then let the PPA rotate
+    // it 90 deg into the physical (portrait) back framebuffer.
+    esp_cache_msync(s_logical, FB_BYTES, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+    ppa_srm_oper_config_t srm = {
+        .in = {
+            .buffer       = s_logical,
+            .pic_w        = LOG_W,
+            .pic_h        = LOG_H,
+            .block_w      = LOG_W,
+            .block_h      = LOG_H,
+            .block_offset_x = 0,
+            .block_offset_y = 0,
+            .srm_cm       = PPA_SRM_COLOR_MODE_RGB565,
+        },
+        .out = {
+            .buffer       = s_fb[s_back],
+            .buffer_size  = FB_BYTES,
+            .pic_w        = PHYS_W,
+            .pic_h        = PHYS_H,
+            .block_offset_x = 0,
+            .block_offset_y = 0,
+            .srm_cm       = PPA_SRM_COLOR_MODE_RGB565,
+        },
+        .rotation_angle = PPA_SRM_ROTATION_ANGLE_90,
+        .scale_x = 1.0f,
+        .scale_y = 1.0f,
+        .mode = PPA_TRANS_MODE_BLOCKING,
+    };
+    ppa_do_scale_rotate_mirror(s_ppa, &srm);
+    esp_lcd_panel_draw_bitmap(s_panel, 0, 0, PHYS_W, PHYS_H, s_fb[s_back]);
     s_back ^= 1;
-    g_backbuf = s_fb[s_back];
 }
 
 uint8_t *display_backbuf(void) { return g_backbuf; }
@@ -257,15 +293,15 @@ uint8_t *display_backbuf(void) { return g_backbuf; }
 void display_fill(uint8_t r, uint8_t g, uint8_t b)
 {
     uint16_t px = disp_rgb565(r, g, b);
-    uint16_t *buf = (uint16_t *)g_backbuf;
-    int n = DISP_W * DISP_H;
+    uint16_t *buf = (uint16_t *)s_logical;
+    int n = LOG_W * LOG_H;
     for (int i = 0; i < n; i++) buf[i] = px;
 }
 
 void display_init(void)
 {
-    g_disp_w = LCD_W;
-    g_disp_h = LCD_H;
+    g_disp_w = LOG_W;   // render in logical landscape
+    g_disp_h = LOG_H;
 
     // IO expanders bring up power rails and pulse LCD_RST. Also powers the
     // ESP32-C6 WLAN rail — must run before esp_hosted_init in the network task.
@@ -319,7 +355,7 @@ void display_init(void)
         .pixel_format = LCD_COLOR_PIXEL_FORMAT_RGB565,
         .num_fbs = 2,
         .video_timing = {
-            .h_size = LCD_W, .v_size = LCD_H,
+            .h_size = PHYS_W, .v_size = PHYS_H,
             .hsync_pulse_width = 2, .hsync_back_porch = 40, .hsync_front_porch = 40,
             .vsync_pulse_width = 2, .vsync_back_porch = 8,  .vsync_front_porch = 220,
         },
@@ -347,17 +383,26 @@ void display_init(void)
     ESP_ERROR_CHECK(esp_lcd_dpi_panel_get_frame_buffer(s_panel, 2, &fb0, &fb1));
     s_fb[0] = (uint8_t *)fb0;
     s_fb[1] = (uint8_t *)fb1;
-    memset(s_fb[0], 0, DISP_FB_SIZE);
-    esp_cache_msync(s_fb[0], DISP_FB_SIZE, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
-    memset(s_fb[1], 0, DISP_FB_SIZE);
-    esp_cache_msync(s_fb[1], DISP_FB_SIZE, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+    memset(s_fb[0], 0, FB_BYTES);
+    esp_cache_msync(s_fb[0], FB_BYTES, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
+    memset(s_fb[1], 0, FB_BYTES);
+    esp_cache_msync(s_fb[1], FB_BYTES, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
     s_back = 0;
-    g_backbuf = s_fb[s_back];
+
+    // Logical landscape render buffer (the shared render code draws here).
+    s_logical = heap_caps_aligned_calloc(64, FB_BYTES, 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
+    assert(s_logical);
+    g_backbuf = s_logical;
+
+    // PPA client for the per-frame 90-degree rotate (logical -> physical fb).
+    ppa_client_config_t ppa_cfg = { .oper_type = PPA_OPERATION_SRM };
+    ESP_ERROR_CHECK(ppa_register_client(&ppa_cfg, &s_ppa));
 
     ledc_set_duty(LEDC_LOW_SPEED_MODE, LCD_LEDC_CHAN, LCD_LEDC_DUTY_MAX);
     ledc_update_duty(LEDC_LOW_SPEED_MODE, LCD_LEDC_CHAN);
 
-    ESP_LOGI(TAG, "Display init: %dx%d RGB565 MIPI-DSI hw double-buffered", DISP_W, DISP_H);
+    ESP_LOGI(TAG, "Display init: logical %dx%d -> physical %dx%d (PPA 90deg)",
+             LOG_W, LOG_H, PHYS_W, PHYS_H);
 }
 
 // ── Audio (audio.h) — ES8388 via esp_codec_dev ───────────────────────────
@@ -511,8 +556,8 @@ esp_err_t board_touch_init(void)
         return ESP_FAIL;
     }
     esp_lcd_touch_config_t tp_cfg = {
-        .x_max = LCD_W,
-        .y_max = LCD_H,
+        .x_max = PHYS_W,   // raw panel coordinates; rotation applied below
+        .y_max = PHYS_H,
         .rst_gpio_num = GPIO_NUM_NC,
         .int_gpio_num = ST7123_TOUCH_INT_GPIO,
         .levels = { .reset = 0, .interrupt = 0 },
@@ -536,8 +581,16 @@ bool board_touch_read(uint16_t *x, uint16_t *y)
     uint8_t cnt = 0;
     bool pressed = esp_lcd_touch_get_coordinates(s_touch, px, py, strength, &cnt, 1);
     if (pressed && cnt > 0) {
-        *x = px[0];
-        *y = py[0];
+        // Map raw portrait panel coords (px:0..PHYS_W, py:0..PHYS_H) into the
+        // logical landscape surface (0..LOG_W, 0..LOG_H), matching the PPA 90deg
+        // display rotation. If taps land mirrored, flip the two expressions.
+        uint16_t rx = px[0], ry = py[0];
+        uint16_t lx = ry;                       // panel-y -> logical-x (0..1280)
+        uint16_t ly = (rx < PHYS_W) ? (PHYS_W - 1 - rx) : 0;  // panel-x -> logical-y
+        if (lx >= LOG_W) lx = LOG_W - 1;
+        if (ly >= LOG_H) ly = LOG_H - 1;
+        *x = lx;
+        *y = ly;
         return true;
     }
     return false;
