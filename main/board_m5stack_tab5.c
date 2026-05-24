@@ -588,8 +588,9 @@ bool board_touch_read(uint16_t *x, uint16_t *y)
         // logical landscape surface (0..LOG_W, 0..LOG_H), matching the PPA 90deg
         // display rotation. If taps land mirrored, flip the two expressions.
         uint16_t rx = px[0], ry = py[0];
-        uint16_t lx = ry;        // panel-y -> logical-x (0..1280): left/right correct
-        uint16_t ly = rx;        // panel-x -> logical-y (0..720): not flipped (swipes)
+        // 90deg display rotation: panel-y -> logical-x (flipped), panel-x -> logical-y.
+        uint16_t lx = (ry < PHYS_H) ? (PHYS_H - 1 - ry) : 0;  // left/right
+        uint16_t ly = rx;                                     // up/down (swipes)
         if (lx >= LOG_W) lx = LOG_W - 1;
         if (ly >= LOG_H) ly = LOG_H - 1;
         *x = lx;
