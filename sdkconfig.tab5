@@ -1,14 +1,17 @@
 # M5Stack Tab5 board-specific overrides (layered on top of sdkconfig.defaults).
 #
 # The ESP32-C6 co-processor is wired to a DIFFERENT set of SDIO pins than the
-# Waveshare board (whose pins are the esp_hosted defaults). esp_hosted 2.11.7
-# uses the CONFIG_ESP_SDIO_* namespace; override the pins for the Tab5 here.
-# Tab5: SDIO slot 1 on GPIOs 8-13, slave reset on GPIO 54 (active high).
-CONFIG_ESP_SDIO_PIN_CMD=13
-CONFIG_ESP_SDIO_PIN_CLK=12
-CONFIG_ESP_SDIO_PIN_D0=11
-CONFIG_ESP_SDIO_PIN_D1=10
-CONFIG_ESP_SDIO_PIN_D2=9
-CONFIG_ESP_SDIO_PIN_D3=8
-CONFIG_ESP_SDIO_GPIO_RESET_SLAVE=54
-CONFIG_SDIO_RESET_ACTIVE_HIGH=y
+# Waveshare board (whose pins are the esp_hosted defaults). The pins esp_hosted
+# actually reads are the per-slot CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_*_SLOT_1 keys
+# (the CONFIG_ESP_SDIO_PIN_* keys are derived from the slot and get reset to the
+# slot defaults). Tab5: SDIO slot 1 on GPIOs 8-13, slave reset GPIO 54 (active
+# high). Values match our working m5stack-tab5-video-stream config.
+CONFIG_ESP_HOSTED_SDIO_SLOT_1=y
+CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_CMD_SLOT_1=13
+CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_CLK_SLOT_1=12
+CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_D0_SLOT_1=11
+CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_D1_4BIT_BUS_SLOT_1=10
+CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_D2_4BIT_BUS_SLOT_1=9
+CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_D3_4BIT_BUS_SLOT_1=8
+CONFIG_ESP_HOSTED_SDIO_GPIO_RESET_SLAVE=54
+CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y
