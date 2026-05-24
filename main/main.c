@@ -182,10 +182,12 @@ static void draw_spectrum(uint8_t *buf)
     // Black background
     memset(buf, 0, DISP_W * DISP_H * DISP_BPP);
 
-    const int bar_w    = 20;
+    // Fill the full display width: derive bar width from DISP_W so the bands
+    // span the whole screen (720 square or 1280 landscape), not a fixed 704px.
     const int gap      = 2;
-    const int stride   = bar_w + gap;
-    const int margin_x = (DISP_W - stride * SPECTRUM_BANDS + gap) / 2;
+    const int stride   = DISP_W / SPECTRUM_BANDS;
+    const int bar_w    = stride - gap;
+    const int margin_x = (DISP_W - stride * SPECTRUM_BANDS) / 2;
     const int bar_area_top = DISP_H * 15 / 100;
     const int bar_area_h   = DISP_H - bar_area_top;
 
