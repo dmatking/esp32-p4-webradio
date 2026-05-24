@@ -1,8 +1,8 @@
 dependencies:
   idf: ">=5.3"
-  # Match the C6 slave firmware (v2.12.3) on the host side. The older 2.12.0
-  # boot assert (esp_startup_start_app) is fixed by 2.12.3 — verified on the P4
-  # via esp32-terminal, which runs this exact set.
+  # Match the C6 slave firmware (v2.12.3) on the host side. The old <2.12 pin
+  # was for an earlier 2.12.x boot assert (esp_startup_start_app); 2.12.3 fixes
+  # it — verified booting + streaming on BOTH the Waveshare and the Tab5.
   espressif/esp_hosted: "==2.12.3"
   espressif/esp_wifi_remote: "==1.5.0"
   espressif/es8311: "^1.0.0"
