@@ -10,8 +10,12 @@ CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_ESP_DEFAULT_CPU_FREQ_360=y
 CONFIG_FREERTOS_HZ=1000
 
-# Console
-CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+# Console: UART primary + USB-JTAG secondary. USB-JTAG as the PRIMARY console
+# (EV-board style) is fragile on the Waveshare/Tab5 — resets re-enumerate USB
+# and wedge the console so logs stop. UART primary anchors the console; the
+# USB-JTAG secondary still mirrors logs to /dev/ttyACM0 robustly.
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG=y
 
 # Main task stack (needs to be large enough for display init)
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
