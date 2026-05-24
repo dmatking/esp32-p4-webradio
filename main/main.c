@@ -274,9 +274,53 @@ static void draw_frame(int frame)
 
 // ── Callbacks ────────────────────────────────────────────────────────
 
+// The 8x16 font only covers ASCII 32–126, so any UTF-8 multibyte character
+// would render as one '?' per byte (e.g. a curly apostrophe → "???"). Decode
+// UTF-8 and transliterate the common punctuation to ASCII, collapsing anything
+// else to a single '?'.
+static void ascii_transliterate(char *dst, size_t dstlen, const char *src)
+{
+    size_t o = 0;
+    for (const unsigned char *p = (const unsigned char *)src; *p && o + 1 < dstlen; ) {
+        unsigned char c = *p;
+        uint32_t cp;
+        int n;  // bytes consumed
+        if (c < 0x80)            { cp = c;                       n = 1; }
+        else if ((c & 0xE0) == 0xC0) { cp = c & 0x1F; n = 2; }
+        else if ((c & 0xF0) == 0xE0) { cp = c & 0x0F; n = 3; }
+        else if ((c & 0xF8) == 0xF0) { cp = c & 0x07; n = 4; }
+        else                     { p++; dst[o++] = '?'; continue; }  // stray byte
+        for (int i = 1; i < n; i++) {
+            if ((p[i] & 0xC0) != 0x80) { n = 1; cp = '?'; break; }  // truncated
+            cp = (cp << 6) | (p[i] & 0x3F);
+        }
+        p += n;
+
+        const char *rep = NULL;  // multi-char replacement, if any
+        char one = 0;            // single-char replacement
+        switch (cp) {
+        case 0x2018: case 0x2019: case 0x02BC: one = '\''; break;  // ' '
+        case 0x201C: case 0x201D: one = '"';  break;              // " "
+        case 0x2013: case 0x2014: case 0x2015: one = '-'; break;  // – — ―
+        case 0x00A0: one = ' '; break;                            // nbsp
+        case 0x2026: rep = "..."; break;                          // …
+        default:
+            if (cp >= 0x20 && cp <= 0x7E) one = (char)cp;         // plain ASCII
+            else one = '?';                                       // unsupported
+            break;
+        }
+        if (rep) {
+            while (*rep && o + 1 < dstlen) dst[o++] = *rep++;
+        } else {
+            dst[o++] = one;
+        }
+    }
+    dst[o] = '\0';
+}
+
 static void on_song_title(const char *title)
 {
-    snprintf(s_song_title, sizeof(s_song_title), "%s", title);
+    ascii_transliterate(s_song_title, sizeof(s_song_title), title);
     ESP_LOGI(TAG, "Now playing: %s", s_song_title);
 }
 
