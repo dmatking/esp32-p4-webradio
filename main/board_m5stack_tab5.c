@@ -111,6 +111,7 @@ static i2c_master_bus_handle_t  s_i2c_bus;
 static i2c_master_dev_handle_t  s_pi4ioe1;
 static esp_codec_dev_handle_t   s_spk_dev;
 static int                      s_sample_rate = DEFAULT_RATE;
+static int                      s_out_vol = 60;   // last volume; re-applied after codec reopen
 static esp_lcd_touch_handle_t   s_touch;
 
 // ── ST7123 vendor init sequence (Tab5, post-Oct-2025) ────────────────────
@@ -476,7 +477,7 @@ esp_err_t audio_init(void)
     if (!s_spk_dev) { ESP_LOGE(TAG, "codec_dev create failed"); return ESP_FAIL; }
 
     if (codec_open(DEFAULT_RATE) != ESP_OK) { ESP_LOGE(TAG, "codec open failed"); return ESP_FAIL; }
-    esp_codec_dev_set_out_vol(s_spk_dev, 60);
+    esp_codec_dev_set_out_vol(s_spk_dev, s_out_vol);
     s_sample_rate = DEFAULT_RATE;
     ESP_LOGI(TAG, "Audio init: ES8388 @ I2C 0x%02x, I2S%d, %d Hz stereo",
              ES8388_CODEC_DEFAULT_ADDR, I2S_PORT, DEFAULT_RATE);
@@ -504,15 +505,17 @@ esp_err_t audio_set_sample_rate(int rate)
     if (codec_open(rate) != ESP_OK) {
         ESP_LOGW(TAG, "reopen at %d failed; restoring %d", rate, s_sample_rate);
         codec_open(s_sample_rate);
+        esp_codec_dev_set_out_vol(s_spk_dev, s_out_vol);
         return ESP_FAIL;
     }
-    esp_codec_dev_set_out_vol(s_spk_dev, 60);
+    esp_codec_dev_set_out_vol(s_spk_dev, s_out_vol);  // reopen resets volume; restore it
     s_sample_rate = rate;
     return ESP_OK;
 }
 
 esp_err_t audio_set_volume(int vol)
 {
+    s_out_vol = vol;
     return esp_codec_dev_set_out_vol(s_spk_dev, vol) == 0 ? ESP_OK : ESP_FAIL;
 }
 
@@ -585,8 +588,8 @@ bool board_touch_read(uint16_t *x, uint16_t *y)
         // logical landscape surface (0..LOG_W, 0..LOG_H), matching the PPA 90deg
         // display rotation. If taps land mirrored, flip the two expressions.
         uint16_t rx = px[0], ry = py[0];
-        uint16_t lx = ry;                       // panel-y -> logical-x (0..1280)
-        uint16_t ly = (rx < PHYS_W) ? (PHYS_W - 1 - rx) : 0;  // panel-x -> logical-y
+        uint16_t lx = ry;        // panel-y -> logical-x (0..1280): left/right correct
+        uint16_t ly = rx;        // panel-x -> logical-y (0..720): not flipped (swipes)
         if (lx >= LOG_W) lx = LOG_W - 1;
         if (ly >= LOG_H) ly = LOG_H - 1;
         *x = lx;
