@@ -13,6 +13,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_heap_caps.h"
+#include "nvs.h"
 #include "display.h"
 #include "wifi.h"
 #include "radio_browser.h"
@@ -66,6 +67,7 @@ typedef enum {
     STATE_PLAYING,              // spectrum visualizer
     STATE_WIFI_FAILED,          // pulsing red — could not join WiFi
     STATE_API_FAILED,           // pulsing orange — joined WiFi, station API failed
+    STATE_UNAVAILABLE,          // station refused the stream (e.g. HTTP 403)
 } app_state_t;
 static volatile app_state_t s_app_state = STATE_WIFI_CONNECTING;
 
@@ -87,6 +89,89 @@ static void hue_to_bgr(int hue, uint8_t *b, uint8_t *g, uint8_t *r)
         default:rv=255; gv=0;   bv=q;   break;
     }
     *b = bv; *g = gv; *r = rv;
+}
+
+// ── Persisted settings (NVS) ─────────────────────────────────────────
+// NVS is already initialized by the wifi_prov component during connect.
+#define SETTINGS_NS "radio"
+
+static void settings_save_volume(int vol)
+{
+    nvs_handle_t h;
+    if (nvs_open(SETTINGS_NS, NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_u8(h, "vol", (uint8_t)vol);
+    nvs_commit(h);
+    nvs_close(h);
+}
+
+static void settings_save_station(const char *url)
+{
+    nvs_handle_t h;
+    if (nvs_open(SETTINGS_NS, NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_str(h, "url", url);
+    nvs_commit(h);
+    nvs_close(h);
+}
+
+// Load the saved volume into s_volume (leaves the default if none stored).
+static void settings_load_volume(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(SETTINGS_NS, NVS_READONLY, &h) != ESP_OK) return;
+    uint8_t v;
+    if (nvs_get_u8(h, "vol", &v) == ESP_OK && v <= 100) s_volume = v;
+    nvs_close(h);
+}
+
+// Return the index of the saved station URL within the fetched list, or -1.
+static int settings_saved_station_idx(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(SETTINGS_NS, NVS_READONLY, &h) != ESP_OK) return -1;
+    char url[STATION_URL_LEN];
+    size_t len = sizeof(url);
+    int idx = -1;
+    if (nvs_get_str(h, "url", url, &len) == ESP_OK) {
+        for (int i = 0; i < s_station_count; i++) {
+            if (strcmp(s_stations[i].url, url) == 0) { idx = i; break; }
+        }
+    }
+    nvs_close(h);
+    return idx;
+}
+
+// ── Header overlay (station name, song title, index, volume) ─────────
+
+static void draw_header(uint8_t *buf)
+{
+    if (s_station_count <= 0) return;
+
+    // Station index — small, top-left corner
+    char idx_buf[24];
+    snprintf(idx_buf, sizeof(idx_buf), "%d/%d", s_station_idx + 1, s_station_count);
+    font_puts(buf, 8, 4, idx_buf, 120, 120, 120);
+
+    // Volume — small, top-right corner
+    char vol_buf[16];
+    snprintf(vol_buf, sizeof(vol_buf), s_muted ? "MUTE" : "Vol %d", s_volume);
+    int vol_w = strlen(vol_buf) * FONT_W;
+    font_puts(buf, DISP_W - vol_w - 8, 4, vol_buf, 120, 120, 120);
+
+    // Station name — large, centered, white. Shrink a scale if it would
+    // overflow the screen width.
+    const char *name = s_stations[s_station_idx].name;
+    int name_scale = 3;
+    if (font_text_w(name, name_scale) > DISP_W - 8) name_scale = 2;
+    font_puts_center(buf, 8, name, name_scale, 255, 255, 255);
+
+    // Song title — same size as station name, amber to differentiate.
+    if (s_song_title[0]) {
+        int title_scale = 3;
+        if (font_text_w(s_song_title, title_scale) > DISP_W - 8) title_scale = 2;
+        if (font_text_w(s_song_title, title_scale) > DISP_W - 8) title_scale = 1;
+        font_puts_center(buf, 8 + name_scale * FONT_H + 6, s_song_title,
+                         title_scale, 0, 200, 255);  // amber (BGR)
+    }
 }
 
 // ── Spectrum bar rendering ───────────────────────────────────────────
@@ -139,37 +224,8 @@ static void draw_spectrum(uint8_t *buf)
         }
     }
 
-    // ── Text overlay in top area ─────────────────────────────────────
-    if (s_station_count > 0) {
-        // Station name — 2x scale (16x32), centered, white
-        const char *name = s_stations[s_station_idx].name;
-        int name_len = strlen(name);
-        int name_w = name_len * FONT_W * 2;
-        int name_x = (DISP_W - name_w) / 2;
-        if (name_x < 4) name_x = 4;
-        font_puts_2x(buf, name_x, 8, name, 255, 255, 255);
-
-        // Song title — 1x scale (8x16), centered, light cyan
-        if (s_song_title[0]) {
-            int title_len = strlen(s_song_title);
-            int title_w = title_len * FONT_W;
-            int title_x = (DISP_W - title_w) / 2;
-            if (title_x < 4) title_x = 4;
-            font_puts(buf, title_x, 44, s_song_title, 200, 220, 180);
-        }
-
-        // Station index — small, bottom-left
-        char idx_buf[16];
-        snprintf(idx_buf, sizeof(idx_buf), "%d/%d", s_station_idx + 1, s_station_count);
-        font_puts(buf, 8, 68, idx_buf, 100, 100, 100);
-
-        // Volume — small, bottom-right of header area
-        char vol_buf[16];
-        snprintf(vol_buf, sizeof(vol_buf), s_muted ? "MUTE" : "Vol %d", s_volume);
-        int vol_w = strlen(vol_buf) * FONT_W;
-        font_puts(buf, DISP_W - vol_w - 8, 68, vol_buf, 100, 100, 100);
-    }
-
+    // Text overlay in the top area.
+    draw_header(buf);
 }
 
 // ── Frame dispatch ───────────────────────────────────────────────────
@@ -205,6 +261,11 @@ static void draw_frame(int frame)
     case STATE_API_FAILED:
         font_puts_center(buf, 230, "Station API Error", 4, 0, 140, 255); // orange
         font_puts_center(buf, 360, "Retrying...", 3, 255, 255, 255);
+        break;
+    case STATE_UNAVAILABLE:
+        draw_header(buf);  // keep station name/index so the user knows which
+        font_puts_center(buf, 330, "Currently", 4, 255, 255, 255);
+        font_puts_center(buf, 410, "Unavailable", 4, 0, 140, 255);  // orange
         break;
     case STATE_PLAYING:
         draw_spectrum(buf);
@@ -256,6 +317,7 @@ static void commit_station(int idx)
     stream_start(st->url, on_song_title);
     mp3dec_start(NULL);
     s_app_state = STATE_PLAYING;
+    settings_save_station(st->url);
 }
 
 // Touch-driven selection: update highlight now, defer the stream start.
@@ -316,6 +378,10 @@ static void network_task(void *arg)
     }
     spectrum_init();
 
+    // Restore the saved volume (falls back to the default if none stored).
+    settings_load_volume();
+    audio_set_volume(s_volume);
+
     // Initialize touch (GT911 on same I2C bus)
     if (touch_init() == ESP_OK) {
         s_touch_ready = true;
@@ -325,14 +391,18 @@ static void network_task(void *arg)
         ESP_LOGW(TAG, "Touch init failed — continuing without touch");
     }
 
-    // Prefer a known-working Texas music station
-    int start_idx = 0;
-    const char *prefs[] = { "Radio Free Texas", "KUTX", "KMFA", "KERA", NULL };
-    for (const char **p = prefs; *p; p++) {
-        for (int i = 0; i < s_station_count; i++) {
-            if (strcasestr(s_stations[i].name, *p)) {
-                start_idx = i;
-                goto found;
+    // Resume the last station if it's still in the list; otherwise fall back
+    // to a known-working Texas music station.
+    int start_idx = settings_saved_station_idx();
+    if (start_idx < 0) {
+        start_idx = 0;
+        const char *prefs[] = { "Radio Free Texas", "KUTX", "KMFA", "KERA", NULL };
+        for (const char **p = prefs; *p; p++) {
+            for (int i = 0; i < s_station_count; i++) {
+                if (strcasestr(s_stations[i].name, *p)) {
+                    start_idx = i;
+                    goto found;
+                }
             }
         }
     }
@@ -370,8 +440,8 @@ void app_main(void)
 
         // Handle touch input — drain everything the touch task has queued.
         touch_event_t ev;
-        while (s_app_state == STATE_PLAYING && s_touch_q &&
-               xQueueReceive(s_touch_q, &ev, 0)) {
+        while ((s_app_state == STATE_PLAYING || s_app_state == STATE_UNAVAILABLE) &&
+               s_touch_q && xQueueReceive(s_touch_q, &ev, 0)) {
             switch (ev) {
             case TOUCH_EVENT_TAP_LEFT:
                 ESP_LOGI(TAG, "Touch: previous station");
@@ -395,16 +465,18 @@ void app_main(void)
                 ESP_LOGI(TAG, "Touch: %s", s_muted ? "muted" : "unmuted");
                 break;
             case TOUCH_EVENT_SWIPE_UP:
-                s_volume += 10;
+                s_volume += 2;
                 if (s_volume > 100) s_volume = 100;
                 audio_set_volume(s_volume);
                 if (s_muted) { s_muted = false; audio_pa_enable(true); }
+                settings_save_volume(s_volume);
                 ESP_LOGI(TAG, "Touch: volume up → %d", s_volume);
                 break;
             case TOUCH_EVENT_SWIPE_DOWN:
-                s_volume -= 10;
+                s_volume -= 2;
                 if (s_volume < 0) s_volume = 0;
                 audio_set_volume(s_volume);
+                settings_save_volume(s_volume);
                 ESP_LOGI(TAG, "Touch: volume down → %d", s_volume);
                 break;
             default:
@@ -425,17 +497,28 @@ void app_main(void)
             continue;
         }
 
-        // Auto-advance: if the stream stays dead for ~5 s, try the next
-        // station. Suppressed while a selection is pending (the stream is
-        // intentionally about to change).
-        if (s_app_state == STATE_PLAYING && s_pending_idx < 0 && !stream_is_active()) {
-            TickType_t now = xTaskGetTickCount();
-            if (dead_since == 0) dead_since = now;
-            if ((now - dead_since) >= pdMS_TO_TICKS(5000)) {
-                ESP_LOGW(TAG, "Stream dead, advancing to next station");
-                int next = (s_station_idx + 1) % s_station_count;
-                commit_station(next);
+        // React to a stream that isn't feeding audio. Suppressed while a
+        // selection is pending (the stream is intentionally about to change).
+        if (s_pending_idx < 0 && !stream_is_active() &&
+            (s_app_state == STATE_PLAYING || s_app_state == STATE_UNAVAILABLE)) {
+            if (stream_failed()) {
+                // The station refused us (e.g. HTTP 403). Show "Currently
+                // Unavailable" and stay put — the user can page elsewhere.
+                if (s_app_state != STATE_UNAVAILABLE) {
+                    ESP_LOGW(TAG, "Stream refused, marking station unavailable");
+                    s_app_state = STATE_UNAVAILABLE;
+                }
                 dead_since = 0;
+            } else {
+                // Connected then died — auto-advance after ~5 s.
+                TickType_t now = xTaskGetTickCount();
+                if (dead_since == 0) dead_since = now;
+                if ((now - dead_since) >= pdMS_TO_TICKS(5000)) {
+                    ESP_LOGW(TAG, "Stream dead, advancing to next station");
+                    int next = (s_station_idx + 1) % s_station_count;
+                    commit_station(next);
+                    dead_since = 0;
+                }
             }
         } else {
             dead_since = 0;

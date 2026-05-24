@@ -29,6 +29,7 @@ static StreamBufferHandle_t s_ringbuf;
 static TaskHandle_t s_task;
 static volatile bool s_running;
 static volatile bool s_task_done = true;
+static volatile bool s_failed;      // connection refused / non-2xx (e.g. 403)
 static char s_url[300];
 static icy_meta_cb_t s_meta_cb;
 
@@ -43,7 +44,19 @@ static void parse_icy_meta(const char *meta, int len)
     const char *p = strnstr(meta, key, len);
     if (!p) return;
     p += strlen(key);
-    const char *end = memchr(p, '\'', meta + len - p);
+    // The ICY value is delimited by "';" (e.g. StreamTitle='...';StreamUrl=...).
+    // Match that pair so apostrophes inside the title (e.g. "Ain't") survive.
+    const char *avail = meta + len;
+    const char *end = NULL;
+    for (const char *q = p; q < avail - 1; q++) {
+        if (q[0] == '\'' && q[1] == ';') { end = q; break; }
+    }
+    // Fallback: no "';" found — use the last quote before the block ends.
+    if (!end) {
+        for (const char *q = avail - 1; q >= p; q--) {
+            if (*q == '\'') { end = q; break; }
+        }
+    }
     if (!end || end == p) return;
 
     int tlen = end - p;
@@ -51,6 +64,19 @@ static void parse_icy_meta(const char *meta, int len)
     if (tlen >= (int)sizeof(title)) tlen = sizeof(title) - 1;
     memcpy(title, p, tlen);
     title[tlen] = '\0';
+
+    // Some stations append a station URL to the title
+    // (e.g. "Artist - Song http://example.com"). Chop it off.
+    char *url = strstr(title, "http://");
+    if (!url) url = strstr(title, "https://");
+    if (url) {
+        // Trim trailing separators/whitespace left before the URL.
+        while (url > title && (url[-1] == ' ' || url[-1] == '-' ||
+                               url[-1] == '|' || url[-1] == '\t')) {
+            url--;
+        }
+        *url = '\0';
+    }
 
     ESP_LOGI(TAG, "ICY: %s", title);
     if (s_meta_cb) s_meta_cb(title);
@@ -129,7 +155,7 @@ static void stream_task(void *arg)
         .crt_bundle_attach = esp_crt_bundle_attach,
         .timeout_ms     = 10000,
         .buffer_size    = READ_BUF_SIZE,
-        .user_agent     = "p4-radio/1.0",
+        .user_agent     = "VLC/3.0.20 LibVLC/3.0.20",
     };
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
 
@@ -146,6 +172,7 @@ static void stream_task(void *arg)
         esp_err_t err = esp_http_client_open(client, 0);
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "HTTP open failed: %s", esp_err_to_name(err));
+            s_failed = true;
             goto done;
         }
 
@@ -169,6 +196,7 @@ static void stream_task(void *arg)
 
     if (status < 200 || status >= 300) {
         ESP_LOGE(TAG, "HTTP error %d", status);
+        s_failed = true;
         goto done;
     }
 
@@ -218,6 +246,7 @@ void stream_start(const char *url, icy_meta_cb_t meta_cb)
         xStreamBufferReset(s_ringbuf);
     }
 
+    s_failed  = false;
     s_running = true;
     xTaskCreate(stream_task, "stream", TASK_STACK, NULL, 5, &s_task);
 }
@@ -248,4 +277,9 @@ int stream_read(uint8_t *buf, int len, uint32_t timeout_ms)
 bool stream_is_active(void)
 {
     return s_running;
+}
+
+bool stream_failed(void)
+{
+    return s_failed;
 }

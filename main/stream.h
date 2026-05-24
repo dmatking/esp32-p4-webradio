@@ -24,3 +24,7 @@ int stream_read(uint8_t *buf, int len, uint32_t timeout_ms);
 
 // True if the streaming task is alive and feeding data.
 bool stream_is_active(void);
+
+// True if the last connection was refused or returned a non-2xx status
+// (e.g. HTTP 403) — i.e. the station did not serve a playable stream.
+bool stream_failed(void);
