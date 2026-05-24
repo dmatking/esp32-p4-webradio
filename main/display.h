@@ -7,10 +7,14 @@
 #pragma once
 #include <stdint.h>
 
-#define DISP_W   720
-#define DISP_H   720
+// Display dimensions are board-dependent (set by the active board's
+// display_init): 720x720 on the Waveshare panel, 1280x720 on the Tab5.
 #define DISP_BPP 2                 // RGB565, 16bpp
-#define DISP_FB_SIZE (DISP_W * DISP_H * DISP_BPP)
+extern int g_disp_w;
+extern int g_disp_h;
+#define DISP_W   g_disp_w
+#define DISP_H   g_disp_h
+#define DISP_FB_SIZE (g_disp_w * g_disp_h * DISP_BPP)
 
 // The backbuf holds one little-endian uint16 RGB565 pixel per location.
 static inline uint16_t disp_rgb565(uint8_t r, uint8_t g, uint8_t b)

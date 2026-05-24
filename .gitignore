@@ -1,6 +1,8 @@
 build/
 managed_components/
 dependencies.lock
+# Generated from idf_component.<board>.yml at configure time (board selection).
+main/idf_component.yml
 sdkconfig.old
 *.pyc
 __pycache__/

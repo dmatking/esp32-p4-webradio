@@ -4,6 +4,8 @@ dependencies:
   # (assert in esp_startup_start_app); pin below those, matching gh-dashboard.
   espressif/esp_hosted: "<2.12"
   espressif/esp_wifi_remote: "<1.5"
-  espressif/es8311: "^1.0.0"
   chmorgan/esp-libhelix-mp3: "*"
   espressif/esp-dsp: ">=0.3.0"
+  # M5Stack Tab5: ES8388 codec via esp_codec_dev, ST7123 capacitive touch.
+  espressif/esp_codec_dev: ">=1.0.0"
+  espressif/esp_lcd_touch_st7123: ">=1.0.0"
