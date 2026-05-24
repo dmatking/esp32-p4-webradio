@@ -412,6 +412,15 @@ static void network_task(void *arg)
 
     ESP_LOGI(TAG, "Fetched %d stations", s_station_count);
 
+    // Station names come straight from the API and can carry the same UTF-8
+    // junk as song titles. Transliterate once here so draw_header (per frame)
+    // stays cheap.
+    for (int i = 0; i < s_station_count; i++) {
+        char clean[STATION_NAME_LEN];
+        ascii_transliterate(clean, sizeof(clean), s_stations[i].name);
+        memcpy(s_stations[i].name, clean, sizeof(s_stations[i].name));
+    }
+
     // Initialize audio + spectrum
     if (audio_init() != ESP_OK) {
         ESP_LOGE(TAG, "Audio init failed");
