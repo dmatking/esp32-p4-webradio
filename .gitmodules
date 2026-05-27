@@ -1,0 +1,3 @@
+[submodule "components/wifi_prov"]
+	path = components/wifi_prov
+	url = C:/hardware/esp32-wifi-prov
