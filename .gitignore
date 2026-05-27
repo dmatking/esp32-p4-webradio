@@ -13,3 +13,5 @@ __pycache__/
 
 # Release artifacts (built by tools/build-release.sh; published to GitHub releases)
 /releases/
+
+components/nordesems__esp-captive-portal/

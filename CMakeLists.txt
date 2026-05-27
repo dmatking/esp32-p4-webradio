@@ -31,5 +31,11 @@ if(BOARD STREQUAL "tab5")
     list(APPEND SDKCONFIG_DEFAULTS "sdkconfig.tab5")
 endif()
 
+# Copy captive portal out of the wifi_prov submodule so ESP-IDF finds it at
+# the standard components/ level. The copy happens at configure time and the
+# result is intentionally untracked (.gitignore).
+file(COPY "${CMAKE_SOURCE_DIR}/components/wifi_prov/nordesems__esp-captive-portal"
+     DESTINATION "${CMAKE_SOURCE_DIR}/components/")
+
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(p4_radio)
