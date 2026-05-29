@@ -59,6 +59,7 @@ const char *board_name(void) { return "M5Stack Tab5"; }
 #define PI4IO_REG_OUT_SET    0x05
 #define PI4IO_REG_OUT_H_IM   0x07
 #define PI4IO_REG_IN_DEF_STA 0x09
+#define PI4IO_REG_IN_STA     0x0F
 #define PI4IO_REG_PULL_EN    0x0B
 #define PI4IO_REG_PULL_SEL   0x0D
 #define PI4IO_REG_INT_MASK   0x11
@@ -249,6 +250,47 @@ static void spk_enable(bool on)
     if (!s_pi4ioe1) return;
     uint8_t wb[2] = { PI4IO_REG_OUT_SET, on ? 0b01110110 : 0b01110100 };
     i2c_master_transmit(s_pi4ioe1, wb, 2, I2C_TIMEOUT_MS);
+}
+
+// ── Headphone jack auto-mute ─────────────────────────────────────────────
+// The 3.5 mm jack on the Tab5 is not a switching jack — it only exposes a
+// digital "inserted" signal on PI4IOE1 P7 (IN_STA bit 7). The ES8388 drives
+// the HP and SPK pins simultaneously; to make insertion mute the on-board
+// speakers, we read the detect bit and clear SPK_EN (PI4IOE1 P1) on edge.
+// User mute (audio_pa_enable) and HP insert compose: speaker is on only when
+// the user isn't muted AND no headphone is inserted.
+static bool s_user_pa_on   = true;
+static bool s_hp_inserted  = false;
+
+static void apply_spk_route(void)
+{
+    spk_enable(s_user_pa_on && !s_hp_inserted);
+}
+
+static bool read_hp_inserted(void)
+{
+    if (!s_pi4ioe1) return false;
+    uint8_t wb = PI4IO_REG_IN_STA, rb = 0;
+    if (i2c_master_transmit_receive(s_pi4ioe1, &wb, 1, &rb, 1, I2C_TIMEOUT_MS) != ESP_OK) {
+        return s_hp_inserted;
+    }
+    return (rb & 0x80) != 0;
+}
+
+static void hp_detect_task(void *arg)
+{
+    (void)arg;
+    while (1) {
+        bool now = read_hp_inserted();
+        if (now != s_hp_inserted) {
+            s_hp_inserted = now;
+            ESP_LOGI(TAG, "Headphones %s -- speaker %s",
+                     now ? "inserted" : "removed",
+                     (s_user_pa_on && !now) ? "on" : "off");
+            apply_spk_route();
+        }
+        vTaskDelay(pdMS_TO_TICKS(250));
+    }
 }
 
 // ── Display (display.h) ──────────────────────────────────────────────────
@@ -481,6 +523,12 @@ esp_err_t audio_init(void)
     s_sample_rate = DEFAULT_RATE;
     ESP_LOGI(TAG, "Audio init: ES8388 @ I2C 0x%02x, I2S%d, %d Hz stereo",
              ES8388_CODEC_DEFAULT_ADDR, I2S_PORT, DEFAULT_RATE);
+
+    // Seed state from current jack so we don't blip the amp on boot, then
+    // start the polling task that mutes the speaker while headphones are in.
+    s_hp_inserted = read_hp_inserted();
+    apply_spk_route();
+    xTaskCreate(hp_detect_task, "hp_detect", 2048, NULL, 4, NULL);
     return ESP_OK;
 }
 
@@ -521,7 +569,8 @@ esp_err_t audio_set_volume(int vol)
 
 void audio_pa_enable(bool on)
 {
-    spk_enable(on);
+    s_user_pa_on = on;
+    apply_spk_route();
 }
 
 void audio_test_tone(int duration_ms)
