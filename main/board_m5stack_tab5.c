@@ -37,6 +37,8 @@
 #include "esp_codec_dev.h"
 #include "esp_codec_dev_defaults.h"
 #include "es8388_codec.h"
+#include "dsps_biquad.h"
+#include "dsps_biquad_gen.h"
 
 #include "display.h"
 #include "audio.h"
@@ -252,6 +254,74 @@ static void spk_enable(bool on)
     i2c_master_transmit(s_pi4ioe1, wb, 2, I2C_TIMEOUT_MS);
 }
 
+// ── EQ presets (biquad DSP on decoded PCM, Tab5-only) ────────────────────
+// Three presets: Flat (bypass), Bass (HP auto-default), Voice (manual).
+// Coefficients are rebuilt whenever sample rate or preset changes.
+// Processing happens in audio_write() before the I2S DMA write.
+typedef enum { EQ_FLAT = 0, EQ_BASS, EQ_VOICE } eq_preset_t;
+
+#define EQ_MAX_BANDS   2
+#define EQ_CHUNK       256                   // frames processed per inner loop
+#define EQ_BUF_SAMPLES 2304                  // max one MP3 frame stereo
+
+static float       s_eq_coef[EQ_MAX_BANDS][5];
+static float       s_eq_wL[EQ_MAX_BANDS][2]; // per-channel biquad delay lines
+static float       s_eq_wR[EQ_MAX_BANDS][2];
+static int         s_eq_bands  = 0;
+static eq_preset_t s_eq_preset = EQ_FLAT;
+static int16_t     s_eq_buf[EQ_BUF_SAMPLES];
+
+static void eq_build(eq_preset_t preset, int sample_rate)
+{
+    float fs = (float)sample_rate;
+    s_eq_bands = 0;
+    memset(s_eq_wL, 0, sizeof(s_eq_wL));
+    memset(s_eq_wR, 0, sizeof(s_eq_wR));
+    switch (preset) {
+    case EQ_BASS:
+        // Low-shelf +4 dB at 120 Hz — warmth/body for headphones without clipping
+        dsps_biquad_gen_lowShelf_f32(s_eq_coef[0], 120.0f / fs, 4.0f, 0.7f);
+        s_eq_bands = 1;
+        break;
+    case EQ_VOICE:
+        // High-pass at 120 Hz — remove low rumble for speech clarity
+        dsps_biquad_gen_hpf_f32(s_eq_coef[0], 120.0f / fs, 0.7f);
+        // High-shelf -3 dB at 6 kHz — soften sibilance / harshness
+        dsps_biquad_gen_highShelf_f32(s_eq_coef[1], 6000.0f / fs, -3.0f, 0.7f);
+        s_eq_bands = 2;
+        break;
+    default: // EQ_FLAT: bypass — no processing
+        break;
+    }
+    s_eq_preset = preset;
+    ESP_LOGI(TAG, "EQ: %s (%d band%s, %d Hz)",
+             preset == EQ_FLAT ? "Flat" : preset == EQ_BASS ? "Bass" : "Voice",
+             s_eq_bands, s_eq_bands == 1 ? "" : "s", sample_rate);
+}
+
+static void eq_apply(int16_t *buf, int n_stereo)
+{
+    float tmp[EQ_CHUNK];
+    int frames = n_stereo / 2;
+    for (int ch = 0; ch < 2; ch++) {
+        for (int i = 0; i < frames; i += EQ_CHUNK) {
+            int chunk = (i + EQ_CHUNK <= frames) ? EQ_CHUNK : (frames - i);
+            for (int j = 0; j < chunk; j++)
+                tmp[j] = buf[(i + j) * 2 + ch] * (1.0f / 32768.0f);
+            for (int b = 0; b < s_eq_bands; b++) {
+                float *w = (ch == 0) ? s_eq_wL[b] : s_eq_wR[b];
+                dsps_biquad_f32(tmp, tmp, chunk, s_eq_coef[b], w);
+            }
+            for (int j = 0; j < chunk; j++) {
+                float v = tmp[j] * 32768.0f;
+                buf[(i + j) * 2 + ch] = (v > 32767.0f) ? 32767
+                                       : (v < -32768.0f) ? -32768
+                                       : (int16_t)v;
+            }
+        }
+    }
+}
+
 // ── Headphone jack auto-mute ─────────────────────────────────────────────
 // The 3.5 mm jack on the Tab5 is not a switching jack — it only exposes a
 // digital "inserted" signal on PI4IOE1 P7 (IN_STA bit 7). The ES8388 drives
@@ -274,6 +344,9 @@ static void apply_spk_route(void)
     }
     spk_enable(want);
     s_spk_on = want;
+    // Auto-select EQ: bass for headphones, flat for speaker.
+    // (Voice is a manual selection reached via long-press — deferred.)
+    eq_build(s_hp_inserted ? EQ_BASS : EQ_FLAT, s_sample_rate);
     if (s_spk_dev && want) {
         vTaskDelay(pdMS_TO_TICKS(10));
         esp_codec_dev_set_out_mute(s_spk_dev, false);
@@ -547,7 +620,13 @@ esp_err_t audio_write(const int16_t *samples, size_t num_samples,
                       size_t *samples_written, uint32_t timeout_ms)
 {
     (void)timeout_ms;
-    int ret = esp_codec_dev_write(s_spk_dev, (void *)samples, num_samples * sizeof(int16_t));
+    const void *write_ptr = samples;
+    if (s_eq_bands > 0 && num_samples > 0 && num_samples <= EQ_BUF_SAMPLES) {
+        memcpy(s_eq_buf, samples, num_samples * sizeof(int16_t));
+        eq_apply(s_eq_buf, (int)num_samples);
+        write_ptr = s_eq_buf;
+    }
+    int ret = esp_codec_dev_write(s_spk_dev, (void *)write_ptr, num_samples * sizeof(int16_t));
     if (samples_written) *samples_written = (ret == 0) ? num_samples : 0;
     return ret == 0 ? ESP_OK : ESP_FAIL;
 }
@@ -571,6 +650,7 @@ esp_err_t audio_set_sample_rate(int rate)
     }
     esp_codec_dev_set_out_vol(s_spk_dev, s_out_vol);  // reopen resets volume; restore it
     s_sample_rate = rate;
+    eq_build(s_eq_preset, rate);  // normalize coefficients for new sample rate
     return ESP_OK;
 }
 
