@@ -261,10 +261,23 @@ static void spk_enable(bool on)
 // the user isn't muted AND no headphone is inserted.
 static bool s_user_pa_on   = true;
 static bool s_hp_inserted  = false;
+static bool s_spk_on       = false;
 
 static void apply_spk_route(void)
 {
-    spk_enable(s_user_pa_on && !s_hp_inserted);
+    bool want = s_user_pa_on && !s_hp_inserted;
+    if (want == s_spk_on) return;
+    if (s_spk_dev && !want) {
+        // Fade DAC before killing the amp so HP/speaker don't get a pop burst.
+        esp_codec_dev_set_out_mute(s_spk_dev, true);
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    spk_enable(want);
+    s_spk_on = want;
+    if (s_spk_dev && want) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+        esp_codec_dev_set_out_mute(s_spk_dev, false);
+    }
 }
 
 static bool read_hp_inserted(void)
@@ -463,8 +476,6 @@ static esp_err_t codec_open(int rate)
 
 esp_err_t audio_init(void)
 {
-    spk_enable(true);
-
     i2s_chan_handle_t tx_chan;
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_PORT, I2S_ROLE_MASTER);
     chan_cfg.auto_clear = true;
@@ -549,6 +560,8 @@ esp_err_t audio_set_sample_rate(int rate)
     }
     if (rate == s_sample_rate) return ESP_OK;
     ESP_LOGI(TAG, "Changing sample rate %d -> %d", s_sample_rate, rate);
+    esp_codec_dev_set_out_mute(s_spk_dev, true);
+    vTaskDelay(pdMS_TO_TICKS(20));
     esp_codec_dev_close(s_spk_dev);
     if (codec_open(rate) != ESP_OK) {
         ESP_LOGW(TAG, "reopen at %d failed; restoring %d", rate, s_sample_rate);
