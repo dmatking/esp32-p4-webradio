@@ -17,9 +17,10 @@ esp_err_t slave_ota_update_if_needed(void)
 {
     // Get current co-processor firmware version
     esp_hosted_coprocessor_fwver_t ver = {0};
-    esp_err_t ret = esp_hosted_get_coprocessor_fwversion(&ver);
-    if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "Cannot get co-processor version: %s", esp_err_to_name(ret));
+    esp_err_t ver_ret = esp_hosted_get_coprocessor_fwversion(&ver);
+    esp_err_t ret;
+    if (ver_ret != ESP_OK) {
+        ESP_LOGW(TAG, "Cannot get co-processor version: %s", esp_err_to_name(ver_ret));
         // Proceed anyway -- old firmware may not support the version query
     } else {
         ESP_LOGI(TAG, "Co-processor firmware: %" PRIu32 ".%" PRIu32 ".%" PRIu32,
@@ -62,7 +63,7 @@ esp_err_t slave_ota_update_if_needed(void)
     }
 
     // Check if versions match
-    if (ret == ESP_OK && ver.major1 != 0) {
+    if (ver_ret == ESP_OK && ver.major1 != 0) {
         char cur_ver[32];
         snprintf(cur_ver, sizeof(cur_ver), "%" PRIu32 ".%" PRIu32 ".%" PRIu32,
                  ver.major1, ver.minor1, ver.patch1);
